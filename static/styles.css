@@ -1,0 +1,16 @@
+body{ font-family: Arial, sans-serif; margin:0; padding:0; }
+header{ background:#222; color:#fff; padding:10px 16px }
+main{ display:flex; gap:16px; padding:16px }
+#left, #center, #right{ background:#f6f6f6; padding:12px; border-radius:6px }
+#left{ width:34% }
+#center{ width:40% }
+#right{ width:26% }
+textarea{ width:100%; font-family: monospace }
+.grid{ display:flex; flex-direction:column; gap:2px }
+.row{ display:flex; gap:2px }
+.cell{ width:28px; height:28px; background:#fff; border:1px solid #ddd; display:flex; align-items:center; justify-content:center }
+.cell.P{ background: #cfe; }
+.cell.O{ background: #fec; }
+#visualizer{ min-height:200px }
+pre{ background:#111; color:#0f0; padding:8px; height:200px; overflow:auto }
+
