@@ -1,0 +1,24 @@
+:root{ --gap:12px }
+body{ font-family: Arial, Helvetica, sans-serif; margin:0 }
+header{ background:#222; color:#fff; padding:12px }
+.layout{ display:flex; gap:var(--gap); padding:12px }
+.left{ width:36%; }
+.center{ width:40%; }
+.right{ width:24%; }
+.controls{ margin-top:8px; display:flex; gap:8px }
+.viz-controls{ margin-top:8px; display:flex; gap:8px; align-items:center }
+.grid{ display:flex; flex-direction:column; gap:2px }
+.row{ display:flex; gap:2px }
+.cell{ width:28px; height:28px; border:1px solid #ddd; display:flex; align-items:center; justify-content:center; background:#fff }
+.cell.P{ background:#cfe }
+.cell.O{ background:#fec }
+.logs{ background:#111; color:#0f0; padding:8px; height:300px; overflow:auto }
+
+/* New styles for BotStderrPanel */
+.bot-logs{ display:flex; gap:8px; margin-top:12px }
+.bot-logs .panel{ flex:1; display:flex; flex-direction:column; gap:6px }
+.bot-logs .panel h4{ margin:0 0 4px 0; font-size:14px }
+.bot-logs .logs{ background:#111; color:#f66; padding:8px; height:160px; overflow:auto; border-radius:4px }
+.bot-logs .logs.player{ color:#f66 } /* red-ish for player stderr */
+.bot-logs .logs.opponent{ color:#6cf } /* cyan-ish for opponent stderr */
+.bot-logs .panel strong{ display:block; margin-top:6px; color:#ddd }

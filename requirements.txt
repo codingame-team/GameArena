@@ -1,5 +1,5 @@
 Flask==2.3.2
 python-dotenv==1.0.0
+Flask-Cors==3.1.1
 
 # Note: This is a minimal prototype. In production you should run bots in a strong sandbox (containers, seccomp, gVisor...).
-
