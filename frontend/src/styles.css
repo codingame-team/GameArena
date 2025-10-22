@@ -5,7 +5,8 @@ header{ background:#222; color:#fff; padding:12px }
 .left{ width:36%; }
 .center{ width:40%; }
 .right{ width:24%; }
-.controls{ margin-top:8px; display:flex; gap:8px }
+.controls{ margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+.controls .speed-group{ display:inline-flex; align-items:center; gap:8px; margin-left:8px }
 .viz-controls{ margin-top:8px; display:flex; gap:8px; align-items:center }
 .grid{ display:flex; flex-direction:column; gap:2px }
 .row{ display:flex; gap:2px }
@@ -22,3 +23,16 @@ header{ background:#222; color:#fff; padding:12px }
 .bot-logs .logs.player{ color:#f66 } /* red-ish for player stderr */
 .bot-logs .logs.opponent{ color:#6cf } /* cyan-ish for opponent stderr */
 .bot-logs .panel strong{ display:block; margin-top:6px; color:#ddd }
+
+/* Slider / progress bar for history navigation */
+.viz-controls input[type="range"]{ -webkit-appearance:none; appearance:none; height:6px; background:#ddd; border-radius:6px }
+.viz-controls input[type="range"]:disabled{ opacity:0.5 }
+.viz-controls input[type="range"]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:16px; height:16px; background:#444; border-radius:50%; box-shadow:0 0 0 3px rgba(0,0,0,0.1) }
+.viz-controls input[type="range"]::-moz-range-thumb{ width:16px; height:16px; background:#444; border-radius:50% }
+
+/* Controls layout tweaks */
+.controls{ margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+.controls .speed-group{ display:inline-flex; align-items:center; gap:8px; margin-left:8px }
+
+/* Playing indicator */
+.playing-indicator{ display:inline-block; background:#1b8; color:#022; padding:4px 8px; border-radius:6px; font-weight:700 }
