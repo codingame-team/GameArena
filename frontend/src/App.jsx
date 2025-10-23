@@ -35,6 +35,12 @@ export default function App(){
   const [isCollecting, setIsCollecting] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [animationDelay, setAnimationDelay] = useState(500) // ms
+  // ref so a running animateCollected() loop can read the latest animation delay
+  const animationDelayRef = useRef(animationDelay)
+  useEffect(() => { animationDelayRef.current = animationDelay }, [animationDelay])
+
+  // state to mirror animatingRef so UI rerenders correctly when animation starts/stops
+  const [isAnimating, setIsAnimating] = useState(false)
 
   // Helpers to seek through fullHistory/history
   function getTotalTurns(){
@@ -92,6 +98,7 @@ export default function App(){
     animatingRef.current = false
     collectingRef.current = false
     setIsPaused(false)
+    setIsAnimating(false)
   }
 
   // helper to append a line to the logs state
@@ -167,6 +174,7 @@ export default function App(){
   async function animateCollected(collected, startIndex=0){
     if(!Array.isArray(collected) || collected.length===0) return
     animatingRef.current = true
+    setIsAnimating(true)
     pausedRef.current = false
     stoppedRef.current = false
     setIsPaused(false)
@@ -202,8 +210,18 @@ export default function App(){
         setHistory(h => { const nh = [...h, item]; setCurrentIndex(nh.length - 1); return nh })
         if(item.stdout) setLogs(l=> l + item.stdout)
         if(item.stderr) setLogs(l=> l + item.stderr)
+        // If we just displayed the last item, ensure the animation flags are cleared
+        if(i === collected.length - 1){
+          // reached end -> clear animating/paused so UI shows Play immediately
+          animatingRef.current = false
+          pausedRef.current = false
+          stoppedRef.current = true
+          setIsPaused(false)
+          setIsAnimating(false)
+          break
+        }
         // display delay, but check stopped/paused periodically
-        const stepDelay = animationDelay
+        const stepDelay = (animationDelayRef && typeof animationDelayRef.current === 'number') ? animationDelayRef.current : animationDelay
         const chunk = 100
         let elapsed = 0
         while(elapsed < stepDelay){
@@ -215,10 +233,13 @@ export default function App(){
         }
       }
     }finally{
+      // Always clear animating/paused flags. Do NOT clear stoppedRef here because
+      // we may have intentionally set it to true when we reached the end so the
+      // UI can reflect the 'stopped' state (Play button).
       animatingRef.current = false
       pausedRef.current = false
-      stoppedRef.current = false
       setIsPaused(false)
+      setIsAnimating(false)
     }
   }
 
@@ -247,7 +268,7 @@ export default function App(){
 
       // Once collection finished, stop any previous animation and play new collected history.
       if(!stoppedRef.current){
-        if(animatingRef.current){
+        if(isAnimating){
           appendLog('Stopping previous animation and switching to newly collected run...')
           // stopAnimation will NOT cancel backend collection (collectingRef remains untouched by stopAnimation)
           stopAnimation()
@@ -261,7 +282,7 @@ export default function App(){
   // Play/Pause toggle handler
   function togglePlayPause(){
     // If not currently animating but we have a collected history:
-    if(!animatingRef.current && fullHistory && fullHistory.length>0){
+    if(!isAnimating && fullHistory && fullHistory.length>0){
       const total = fullHistory.length
       // if cursor is at the end, start animation from the beginning
       if(currentIndex >= total - 1){
@@ -276,15 +297,18 @@ export default function App(){
       }
       return
     }
-    if(animatingRef.current){ pausedRef.current = !pausedRef.current; setIsPaused(pausedRef.current) }
+    if(isAnimating){ pausedRef.current = !pausedRef.current; setIsPaused(pausedRef.current) }
   }
 
   // Skip to end: immediately display fullHistory and logs
   function skipToEnd(){
     if(!fullHistory || fullHistory.length===0) return
+    // stop any running animation and mark stopped so UI shows Play
     stoppedRef.current = true
+    animatingRef.current = false
     pausedRef.current = false
     setIsPaused(false)
+    setIsAnimating(false)
     let aggLogs = ''
     for(const item of fullHistory){
       if(item && item.__global_stdout) aggLogs += item.__global_stdout
@@ -299,16 +323,19 @@ export default function App(){
   // Jump to start: display the initial state (first turn) and logs
   function skipToStart(){
     if(!fullHistory || fullHistory.length===0) return
+    // stop any running animation and mark stopped so UI shows Play
     stoppedRef.current = true
+    animatingRef.current = false
     pausedRef.current = false
     setIsPaused(false)
+    setIsAnimating(false)
     const first = fullHistory[0]
     const prefix = fullHistory.slice(0,1)
     let aggLogs = ''
     for(const item of prefix){
       if(item && item.__global_stdout) aggLogs += item.__global_stdout
       else if(item && item.__global_stderr) aggLogs += item.__global_stderr
-      else { if(item && item.stdout) aggLogs += item.stdout; if(item && item.stderr) aggLogs += item.stderr }
+      else { if(item && item.stdout) aggLogs += item.stdout; if(item && item.stderr) agg += item.stderr }
     }
     setHistory(prefix)
     setCurrentIndex(prefix.length - 1)
@@ -322,6 +349,7 @@ export default function App(){
     pausedRef.current = false
     setIsPaused(false)
     animatingRef.current = false
+    setIsAnimating(false)
     // IMPORTANT: do NOT touch collectingRef here. Stopping the animation must not cancel a backend collection.
     setHistory([])
     setLogs('')
@@ -375,12 +403,24 @@ export default function App(){
         pausedRef.current = false
         animatingRef.current = false
         setIsPaused(false)
+        setIsAnimating(false)
       }
     }catch(e){ /* ignore */ }
   }, [currentIndex, fullHistory])
 
   // UI helpers
   function formatDelayLabel(ms){ if(ms <= 200) return 'Fast'; if(ms <= 500) return 'Normal'; return 'Slow' }
+
+  // Compute a clamped progress ratio [0,1] for the visual progress bar and thumb.
+  const progressRatio = (() => {
+    try{
+      const total = getTotalTurns()
+      const pos = (currentIndex >= 0 ? currentIndex + 1 : 0)
+      if(!total || total <= 0) return 0
+      // clamp to [0,1]
+      return Math.max(0, Math.min(1, pos / Math.max(1, total)))
+    }catch(e){ return 0 }
+  })()
 
   async function checkBackend(){
     try{ appendLog('Checking backend /api/referees...'); const res = await axios.get(`${API_BASE}/api/referees`, { timeout: 3000 }); setBackendStatus({status: 'ok', info: Object.keys(res.data).join(',')}); appendLog('Backend reachable. Available referees: ' + Object.keys(res.data).join(',')) }catch(e){ const msg = (e && e.message) ? e.message : String(e); setBackendStatus({status: 'error', info: msg}); appendLog(`Backend check failed: ${msg}`) }
@@ -415,15 +455,15 @@ export default function App(){
             <button onClick={startGame} disabled={isCollecting} aria-busy={isCollecting} aria-live="polite">
               { isCollecting ? 'Collecting...' : 'Run Code' }
             </button>
-            <button onClick={skipToStart} disabled={!(fullHistory && fullHistory.length>0)}>Jump to start</button>
+            <button onClick={skipToStart} disabled={!(fullHistory && fullHistory.length>0)}>{'<<'}</button>
             <button
               onClick={togglePlayPause}
               // enabled when animating OR when we have a collected history (including when cursor is at end)
-              disabled={ !animatingRef.current && !(fullHistory && fullHistory.length>0) }
+              disabled={ !isAnimating && !(fullHistory && fullHistory.length>0) }
             >
-              { animatingRef.current ? (isPaused ? 'Play' : 'Pause') : 'Play' }
+              { isAnimating ? (isPaused ? 'Play' : 'Pause') : 'Play' }
             </button>
-            <button onClick={skipToEnd} disabled={!(fullHistory && fullHistory.length>0)}>Jump to end</button>
+            <button onClick={skipToEnd} disabled={!(fullHistory && fullHistory.length>0)}>{'>>'}</button>
             <div style={{display:'inline-flex', alignItems:'center', gap:8, marginLeft:8}}>
               <label style={{fontSize:12, color:'#666'}}>Speed:</label>
               <input type="range" min={100} max={1000} step={50} value={animationDelay} onChange={(e)=> setAnimationDelay(Number(e.target.value))} />
@@ -462,21 +502,21 @@ export default function App(){
                aria-valuemin={0}
                aria-valuemax={getTotalTurns()}
             >
-              <div style={{position:'absolute', left:0, top:0, bottom:0, width: `${( (currentIndex >= 0 ? currentIndex + 1 : 0) / Math.max(1, getTotalTurns()) ) * 100}%`, background:'#3b82f6', borderRadius:8}} />
-              {/* circular thumb showing current position */}
-              <div style={{
+              <div style={{position:'absolute', left:0, top:0, bottom:0, width: `${progressRatio * 100}%`, background:'#3b82f6', borderRadius:8}} />
+               {/* circular thumb showing current position */}
+               <div style={{
                 position:'absolute',
-                left: `calc(${( (currentIndex >= 0 ? currentIndex + 1 : 0) / Math.max(1, getTotalTurns()) ) * 100}% - 8px)`,
+                left: `calc(${progressRatio * 100}% - 8px)`,
                 top: '50%',
                 transform: 'translateY(-50%)',
-                width:16,
-                height:16,
-                borderRadius:'50%',
-                background:'#fff',
-                border:'2px solid #3b82f6',
-                boxShadow:'0 2px 6px rgba(0,0,0,0.2)',
-                pointerEvents: 'none'
-              }} />
+                 width:16,
+                 height:16,
+                 borderRadius:'50%',
+                 background:'#fff',
+                 border:'2px solid #3b82f6',
+                 boxShadow:'0 2px 6px rgba(0,0,0,0.2)',
+                 pointerEvents: 'none'
+               }} />
             </div>
             <div style={{textAlign:'right', fontSize:12, color:'#444', marginTop:6}}>{Math.max(0, (currentIndex >= 0 ? currentIndex + 1 : 0))} / { getTotalTurns() } turns</div>
           </div>
