@@ -387,6 +387,26 @@ export default function App(){
   // navigation
   function onSliderChange(val){ const i = Number(val); setCurrentIndex(i) }
 
+  // step backward / forward by one turn (uses seekToIndex to reuse existing history/log aggregation)
+  function stepBackward(){
+    stopPlaybackPreserveState()
+    const total = getTotalTurns()
+    if(total === 0) return
+    const cur = (currentIndex >= 0) ? currentIndex : -1
+    // if nothing shown yet (cur === -1), move to first element (index 0)
+    const target = cur <= 0 ? 0 : cur - 1
+    seekToIndex(target)
+  }
+
+  function stepForward(){
+    stopPlaybackPreserveState()
+    const total = getTotalTurns()
+    if(total === 0) return
+    const cur = (currentIndex >= 0) ? currentIndex : -1
+    const target = Math.min(total - 1, cur + 1)
+    seekToIndex(target)
+  }
+
   // clamp currentIndex when history changes
   useEffect(()=>{
     if(!history || history.length === 0){ setCurrentIndex(-1); return }
@@ -452,17 +472,22 @@ export default function App(){
             <small>Bot id: {botId || '—' } • Save status: {saveStatus}</small>
           </div>
           <div className="controls">
-            <button onClick={startGame} disabled={isCollecting} aria-busy={isCollecting} aria-live="polite">
-              { isCollecting ? 'Collecting...' : 'Run Code' }
+            <button onClick={startGame}
+                disabled={isCollecting} aria-busy={isCollecting} aria-live="polite"
+                style={{ fontSize: '16px', padding: '2px 7px' }}>
+              { isCollecting ? 'Collecting...' : '▶ Run my code' }
             </button>
             <button onClick={skipToStart} disabled={!(fullHistory && fullHistory.length>0)}>{'<<'}</button>
+            <button onClick={stepBackward} disabled={getTotalTurns() === 0} aria-label="Recule d'un tour">{'<'}</button>
             <button
               onClick={togglePlayPause}
               // enabled when animating OR when we have a collected history (including when cursor is at end)
               disabled={ !isAnimating && !(fullHistory && fullHistory.length>0) }
+              style={{ fontSize: '22px', padding: '2px 7px' }}
             >
-              { isAnimating ? (isPaused ? 'Play' : 'Pause') : 'Play' }
+              { isAnimating ? (isPaused ? '▶' : '⏸') : '▶' }
             </button>
+            <button onClick={stepForward} disabled={getTotalTurns() === 0} aria-label="Avance d'un tour">{'>'}</button>
             <button onClick={skipToEnd} disabled={!(fullHistory && fullHistory.length>0)}>{'>>'}</button>
             <div style={{display:'inline-flex', alignItems:'center', gap:8, marginLeft:8}}>
               <label style={{fontSize:12, color:'#666'}}>Speed:</label>
