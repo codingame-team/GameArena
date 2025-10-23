@@ -412,7 +412,9 @@ export default function App(){
             <small>Bot id: {botId || '—' } • Save status: {saveStatus}</small>
           </div>
           <div className="controls">
-            <button onClick={startGame} disabled={isCollecting}>Run Code</button>
+            <button onClick={startGame} disabled={isCollecting} aria-busy={isCollecting} aria-live="polite">
+              { isCollecting ? 'Collecting...' : 'Run Code' }
+            </button>
             <button onClick={skipToStart} disabled={!(fullHistory && fullHistory.length>0)}>Jump to start</button>
             <button
               onClick={togglePlayPause}
@@ -487,4 +489,3 @@ export default function App(){
     </div>
   )
 }
-
