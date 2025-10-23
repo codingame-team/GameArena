@@ -19,6 +19,7 @@ import errno
 import json
 import re
 import traceback
+import datetime
 
 # Configure basic logging so INFO logs appear in the Flask console by default
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -215,7 +216,7 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
                 if isinstance(parsed_entry, dict):
                     if parsed_entry.get('init_stderr'):
                         stderr_field = (parsed_entry.get('init_stderr') or '') + (('; ' + stderr_field) if stderr_field else '')
-                logging.getLogger(__name__).info('game %s role=%s: executed parsed bot (path=%s) runner=%s', game.get('id'), role, bot_path, runner_used)
+                # logging.getLogger(__name__).info('game %s role=%s: executed parsed bot (path=%s) runner=%s', game.get('id'), role, bot_path, runner_used)
                 return action, {'stdout': out, 'stderr': stderr_field, 'rc': rc, 'runner': runner_used, 'parsed': True, 'path': bot_path}
             except Exception as e:
                 # parsing-based execution failed; fall back to normal runner below
@@ -251,11 +252,47 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
 
 @app.route('/')
 def index():
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    ua_string = request.headers.get('User-Agent', '')
+    os = 'Unknown'
+    browser = 'Unknown'
+    if 'Windows' in ua_string:
+        os = 'Windows'
+    elif 'Mac' in ua_string or 'Darwin' in ua_string:
+        os = 'macOS'
+    elif 'Linux' in ua_string:
+        os = 'Linux'
+    if 'Chrome' in ua_string:
+        browser = 'Chrome'
+    elif 'Firefox' in ua_string:
+        browser = 'Firefox'
+    elif 'Safari' in ua_string:
+        browser = 'Safari'
+    date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    logging.getLogger(__name__).info('Client connected: IP=%s, OS=%s, Browser=%s, Date=%s', ip, os, browser, date)
     return send_from_directory('static', 'index.html')
 
 
 @app.route('/api/referees')
 def list_referees():
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    ua_string = request.headers.get('User-Agent', '')
+    os = 'Unknown'
+    browser = 'Unknown'
+    if 'Windows' in ua_string:
+        os = 'Windows'
+    elif 'Mac' in ua_string or 'Darwin' in ua_string:
+        os = 'macOS'
+    elif 'Linux' in ua_string:
+        os = 'Linux'
+    if 'Chrome' in ua_string:
+        browser = 'Chrome'
+    elif 'Firefox' in ua_string:
+        browser = 'Firefox'
+    elif 'Safari' in ua_string:
+        browser = 'Safari'
+    date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    logging.getLogger(__name__).info('Client connected: IP=%s, OS=%s, Browser=%s, Date=%s', ip, os, browser, date)
     data = {}
     for name, maker in REFEREES.items():
         ref = maker()
@@ -417,11 +454,11 @@ def step_game(game_id):
         actions['player'] = action_player or 'STAY'
 
         # Log which opponent will be used for this step so it's visible in console
-        try:
-            # Use info level so the opponent name is visible in normal Flask logs
-            logging.getLogger(__name__).info('game %s: opponent=%s', game_id, game.get('opponent'))
-        except Exception:
-            pass
+        # try:
+        #     # Use info level so the opponent name is visible in normal Flask logs
+        #     logging.getLogger(__name__).info('game %s: opponent=%s', game_id, game.get('opponent'))
+        # except Exception:
+        #     pass
 
         try:
             action_opp, opponent_log = _run_bot_for_role(game, ref, 'opponent', opponent_input, initial_map_block, timeout_ms, memory_mb, cpus)
@@ -598,7 +635,4 @@ def _handle_unexpected_error(e):
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
-    app.run(host='0.0.0.0', port=3000, debug=True)
-
-
-
+    app.run(host='127.0.0.1', port=3000, debug=True)
