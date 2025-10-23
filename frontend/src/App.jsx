@@ -3,7 +3,7 @@ import MonacoEditor from './components/MonacoEditor'
 import Visualizer from './components/Visualizer'
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:3000'
+const API_BASE = ''
 
 function makeBotId(){
   if(window && window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID()
@@ -246,6 +246,7 @@ export default function App(){
   // create game, collect history, then animate. Play/Pause will control animateCollected via pausedRef
   async function startGame(){
     try{
+      setLogs('')
       // If backend is already collecting a run, refuse to start another
       if(isCollecting || collectingRef.current){ appendLog('Backend is already building a run; please wait until it finishes.'); return }
 
