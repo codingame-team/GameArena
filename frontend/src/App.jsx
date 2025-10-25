@@ -2,6 +2,8 @@ import React, {useState, useEffect, useRef} from 'react'
 import MonacoEditor from './components/MonacoEditor'
 import Visualizer from './components/Visualizer'
 import axios from 'axios'
+import BotStderrPanel from './components/BotStderrPanel'
+import useGameRunner from './hooks/useGameRunner'
 
 const API_BASE = ''
 
@@ -19,7 +21,7 @@ export default function App(){
   const [history, setHistory] = useState([]) // displayed history
   const [fullHistory, setFullHistory] = useState([]) // collected full history
   const [currentIndex, setCurrentIndex] = useState(-1)
-  const [logs, setLogs] = useState('')
+  const [combinedLogs, setCombinedLogs] = useState('')
 
   // status indicators for backend & docker
   const [backendStatus, setBackendStatus] = useState({status: 'unknown', info: ''}) // status: unknown|ok|error
@@ -39,8 +41,36 @@ export default function App(){
   const animationDelayRef = useRef(animationDelay)
   useEffect(() => { animationDelayRef.current = animationDelay }, [animationDelay])
 
+  // Theme (light | dark)
+  const [theme, setTheme] = useState('light')
+  useEffect(() => {
+    try{
+      const stored = localStorage.getItem('gamearena_theme')
+      if(stored) setTheme(stored)
+    }catch(e){}
+  }, [])
+  useEffect(() => {
+    if(typeof document !== 'undefined'){
+      if(theme === 'dark') document.documentElement.classList.add('theme-dark')
+      else document.documentElement.classList.remove('theme-dark')
+    }
+    try{ localStorage.setItem('gamearena_theme', theme) }catch(e){}
+  }, [theme])
+
   // state to mirror animatingRef so UI rerenders correctly when animation starts/stops
   const [isAnimating, setIsAnimating] = useState(false)
+
+  // Log filter
+  const [logFilter, setLogFilter] = useState('Tout')
+
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(true)
+  const [leftPanelRatio, setLeftPanelRatio] = useState(0.4)
+  const leftContainerRef = useRef(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  // Added state for horizontal splitter ratio
+  // initialize to 2/3 so top area is ~66% and bottom is ~33%
+  const [rowRatio, setRowRatio] = useState(2/3)
 
   // Helpers to seek through fullHistory/history
   function getTotalTurns(){
@@ -63,7 +93,7 @@ export default function App(){
         else if(item && item.__global_stderr) agg += item.__global_stderr
         else { if(item && item.stdout) agg += item.stdout; if(item && item.stderr) agg += item.stderr }
       }
-      setLogs(agg)
+      setCombinedLogs(agg)
       return
     }
     // Fallback to history if fullHistory isn't present
@@ -103,12 +133,23 @@ export default function App(){
 
   // helper to append a line to the logs state
   function appendLog(s){
-    try{ setLogs(l => l + s + '\n') }catch(e){ console.error('appendLog error', e) }
+    try{ setCombinedLogs(l => l + s + '\n') }catch(e){ console.error('appendLog error', e) }
   }
 
   useEffect(()=>{
     // fetch protocol (background)
     axios.get(`${API_BASE}/api/referees`).then(()=>{}).catch(()=>{})
+    // restore theme and speed prefs if present
+    try{
+      const storedSpeed = localStorage.getItem('gamearena_speed')
+      if(storedSpeed){
+        const s = storedSpeed.toLowerCase()
+        const map = { slow: 800, medium: 500, fast: 200 }
+        if(map[s]) setAnimationDelay(map[s])
+      }
+      const storedTheme = localStorage.getItem('gamearena_theme')
+      if(storedTheme) setTheme(storedTheme)
+    }catch(e){}
 
     try{
       let existing = localStorage.getItem('gamearena_bot_id')
@@ -137,116 +178,28 @@ export default function App(){
     saveTimer.current = setTimeout(()=>{ if(!botId){ const nid = makeBotId(); setBotId(nid); localStorage.setItem('gamearena_bot_id', nid); saveBotNow(nid, newCode) } else { saveBotNow(botId, newCode) } }, 1000)
   }
 
-  // collect full history quickly by calling /step repeatedly
-  async function collectFullHistory(gid){
-    const collected = []
-    let finished = false
-    collectingRef.current = true
-    setIsCollecting(true)
-    stoppedRef.current = false
-    try{
-      while(!finished && !stoppedRef.current){
-        const sres = await axios.post(`${API_BASE}/api/games/${gid}/step`)
-        const data = sres.data || {}
-        if(data.finished){
-          finished = true
-          if(Array.isArray(data.history) && data.history.length>0){ collected.splice(0, collected.length, ...data.history) }
-          if(data.stdout) collected.push({__global_stdout: data.stdout})
-          if(data.stderr) collected.push({__global_stderr: data.stderr})
-          break
-        }
-        const entry = data.history_entry
-        if(entry){ collected.push(entry) }
-        else { appendLog('Unexpected response from step: missing history_entry'); break }
-      }
-    }catch(e){ appendLog('Error while running game: ' + (e && e.message ? e.message : String(e))) }
-    collectingRef.current = false
-    setIsCollecting(false)
-    // If finished but collected empty, try GET /history
-    if(collected.length === 0 && !stoppedRef.current){
-      try{ const hres = await axios.get(`${API_BASE}/api/games/${gid}/history`); if(hres && hres.data && Array.isArray(hres.data.history)) collected.splice(0, collected.length, ...hres.data.history) }
-      catch(e){ appendLog('Failed to fetch history: ' + (e && e.message ? e.message : String(e))) }
-    }
-    return collected
-  }
-
-  // animate display of a collected history array with pause/resume/stop support
-  async function animateCollected(collected, startIndex=0){
-    if(!Array.isArray(collected) || collected.length===0) return
-    animatingRef.current = true
-    setIsAnimating(true)
-    pausedRef.current = false
-    stoppedRef.current = false
-    setIsPaused(false)
-    try{
-      // If startIndex points to the current position of the progress indicator,
-      // preserve history/logs up to that index (inclusive) and animate from startIndex+1.
-      let playFrom = 0
-      if(typeof startIndex === 'number' && startIndex >= 0){
-        const prefix = collected.slice(0, startIndex + 1)
-        setHistory(prefix)
-        // aggregate logs for the prefix
-        let agg = ''
-        for(const item of prefix){
-          if(item && item.__global_stdout) agg += item.__global_stdout
-          else if(item && item.__global_stderr) agg += item.__global_stderr
-          else { if(item && item.stdout) agg += item.stdout; if(item && item.stderr) agg += item.stderr }
-        }
-        setLogs(agg)
-        setCurrentIndex(prefix.length - 1)
-        playFrom = startIndex + 1
-      } else {
-        setHistory([])
-        setLogs('')
-        playFrom = 0
-      }
-      for(let i = playFrom; i < collected.length; i++){
-        if(stoppedRef.current) break
-        while(pausedRef.current){ if(stoppedRef.current) break; await new Promise(r=>setTimeout(r, 150)) }
-        if(stoppedRef.current) break
-        const item = collected[i]
-        if(item && item.__global_stdout){ setLogs(l=> l + item.__global_stdout); continue }
-        if(item && item.__global_stderr){ setLogs(l=> l + item.__global_stderr); continue }
-        setHistory(h => { const nh = [...h, item]; setCurrentIndex(nh.length - 1); return nh })
-        if(item.stdout) setLogs(l=> l + item.stdout)
-        if(item.stderr) setLogs(l=> l + item.stderr)
-        // If we just displayed the last item, ensure the animation flags are cleared
-        if(i === collected.length - 1){
-          // reached end -> clear animating/paused so UI shows Play immediately
-          animatingRef.current = false
-          pausedRef.current = false
-          stoppedRef.current = true
-          setIsPaused(false)
-          setIsAnimating(false)
-          break
-        }
-        // display delay, but check stopped/paused periodically
-        const stepDelay = (animationDelayRef && typeof animationDelayRef.current === 'number') ? animationDelayRef.current : animationDelay
-        const chunk = 100
-        let elapsed = 0
-        while(elapsed < stepDelay){
-          if(stoppedRef.current) break
-          if(pausedRef.current){ await new Promise(r=>setTimeout(r, 150)); continue }
-          const wait = Math.min(chunk, stepDelay - elapsed)
-          await new Promise(r=>setTimeout(r, wait))
-          elapsed += wait
-        }
-      }
-    }finally{
-      // Always clear animating/paused flags. Do NOT clear stoppedRef here because
-      // we may have intentionally set it to true when we reached the end so the
-      // UI can reflect the 'stopped' state (Play button).
-      animatingRef.current = false
-      pausedRef.current = false
-      setIsPaused(false)
-      setIsAnimating(false)
-    }
-  }
+  // Use the extracted game runner hook for collection/animation logic
+  const { collectFullHistory, animateCollected } = useGameRunner({
+    API_BASE,
+    appendLog,
+    collectingRef,
+    animatingRef,
+    pausedRef,
+    stoppedRef,
+    animationDelayRef,
+    setIsCollecting,
+    setIsAnimating,
+    setIsPaused,
+    setHistory,
+    setFullHistory,
+    setCombinedLogs,
+    setCurrentIndex
+  })
 
   // create game, collect history, then animate. Play/Pause will control animateCollected via pausedRef
   async function startGame(){
     try{
-      setLogs('')
+      setCombinedLogs('')
       // If backend is already collecting a run, refuse to start another
       if(isCollecting || collectingRef.current){ appendLog('Backend is already building a run; please wait until it finishes.'); return }
 
@@ -257,7 +210,7 @@ export default function App(){
       const res = await axios.post(`${API_BASE}/api/games`, payload)
       const gid = res.data.game_id
       setGameId(gid)
-      setLogs(l=>l+`Started backend run ${gid}. Collecting history...\n`)
+      setCombinedLogs(l=>l+`Started backend run ${gid}. Collecting history...\n`)
       // mark collecting immediately to avoid double-start if user clicks again very fast
       collectingRef.current = true
       setIsCollecting(true)
@@ -277,7 +230,7 @@ export default function App(){
         }
         await animateCollected(collected, 0)
       }
-    }catch(e){ setLogs(l=>l+`Error creating game: ${e}\n`) }
+    }catch(e){ setCombinedLogs(l=>l+`Error creating game: ${e}\n`) }
   }
 
   // Play/Pause toggle handler
@@ -318,7 +271,7 @@ export default function App(){
     }
     setHistory(fullHistory.slice())
     setCurrentIndex(fullHistory.length-1)
-    setLogs(aggLogs)
+    setCombinedLogs(aggLogs)
   }
 
   // Jump to start: display the initial state (first turn) and logs
@@ -336,11 +289,11 @@ export default function App(){
     for(const item of prefix){
       if(item && item.__global_stdout) aggLogs += item.__global_stdout
       else if(item && item.__global_stderr) aggLogs += item.__global_stderr
-      else { if(item && item.stdout) aggLogs += item.stdout; if(item && item.stderr) agg += item.stderr }
+      else { if(item && item.stdout) aggLogs += item.stdout; if(item && item.stderr) aggLogs += item.stderr }
     }
     setHistory(prefix)
     setCurrentIndex(prefix.length - 1)
-    setLogs(aggLogs)
+    setCombinedLogs(aggLogs)
   }
 
   // Stop: interrupt and reset displayed state
@@ -353,7 +306,7 @@ export default function App(){
     setIsAnimating(false)
     // IMPORTANT: do NOT touch collectingRef here. Stopping the animation must not cancel a backend collection.
     setHistory([])
-    setLogs('')
+    setCombinedLogs('')
     setCurrentIndex(-1)
   }
 
@@ -362,10 +315,10 @@ export default function App(){
     if(!gameId){ alert('Start a game first'); return }
     try{
       const res = await axios.post(`${API_BASE}/api/games/${gameId}/step`)
-      setLogs(l=>l + (res.data.stdout||'') + (res.data.stderr||''))
+      setCombinedLogs(l=>l + (res.data.stdout||'') + (res.data.stderr||''))
       const entry = res.data.history_entry
       if(entry){ setHistory(h=>{ const nh = [...h, entry]; setCurrentIndex(nh.length-1); return nh }) }
-    }catch(e){ setLogs(l=>l+`Step error: ${formatAxiosError(e)}\n`) }
+    }catch(e){ setCombinedLogs(l=>l+`Step error: ${formatAxiosError(e)}\n`) }
   }
 
   function formatAxiosError(e){
@@ -382,7 +335,7 @@ export default function App(){
       setHistory(res.data.history || [])
       setFullHistory(res.data.history || [])
       if(res.data.history && res.data.history.length>0){ setCurrentIndex(res.data.history.length-1) }
-    }catch(e){ setLogs(l=>l+`Fetch history error: ${e}\n`) }
+    }catch(e){ setCombinedLogs(l=>l+`Fetch history error: ${e}\n`) }
   }
 
   // navigation
@@ -406,6 +359,67 @@ export default function App(){
     const cur = (currentIndex >= 0) ? currentIndex : -1
     const target = Math.min(total - 1, cur + 1)
     seekToIndex(target)
+  }
+
+  function handleSplitterMouseDown(e) {
+    setIsDragging(true)
+    const startY = e.clientY
+    const startRatio = leftPanelRatio
+    const container = leftContainerRef.current
+    if (!container) return
+    const containerHeight = container.offsetHeight
+    const handleMouseMove = (e) => {
+      const deltaY = e.clientY - startY
+      const deltaRatio = deltaY / containerHeight
+      setLeftPanelRatio(Math.max(0.1, Math.min(0.9, startRatio + deltaRatio)))
+    }
+    const handleMouseUp = () => {
+      setIsDragging(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }
+
+  function handleVerticalSplitterMouseDown(e) {
+    setIsDragging(true)
+    const startX = e.clientX
+    const startRatio = leftPanelRatio
+    const container = e.currentTarget.parentElement
+    const containerWidth = container.offsetWidth
+    const handleMouseMove = (e) => {
+      const deltaX = e.clientX - startX
+      const deltaRatio = deltaX / containerWidth
+      setLeftPanelRatio(Math.max(0.1, Math.min(0.9, startRatio + deltaRatio)))
+    }
+    const handleMouseUp = () => {
+      setIsDragging(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }
+
+  function handleHorizontalSplitterMouseDown(e) {
+    setIsDragging(true)
+    const startY = e.clientY
+    const startRatio = rowRatio
+    const container = e.currentTarget.parentElement
+    const containerHeight = container.offsetHeight
+    const handleMouseMove = (e) => {
+      const deltaY = e.clientY - startY
+      const deltaRatio = deltaY / containerHeight
+      setRowRatio(Math.max(0.1, Math.min(0.9, startRatio + deltaRatio)))
+    }
+    const handleMouseUp = () => {
+      setIsDragging(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
   }
 
   // clamp currentIndex when history changes
@@ -457,100 +471,93 @@ export default function App(){
     return (
       <div style={{display:'inline-flex', alignItems:'center', gap:8}}>
         <span style={{width:10, height:10, borderRadius:10, background:color, display:'inline-block', boxShadow:'0 0 4px rgba(0,0,0,0.2)'}} />
-        <small style={{color:'#333'}}>{label}: {s.status === 'ok' ? 'OK' : s.status === 'unknown' ? 'Unknown' : 'Unavailable'}</small>
+        <small className="status-text">{label}: {s.status === 'ok' ? 'OK' : s.status === 'unknown' ? 'Unknown' : 'Unavailable'}</small>
       </div>
     )
   }
 
+  const [selectedLanguage, setSelectedLanguage] = useState('python')
+
   return (
     <div className="app">
-      <header><h1>GameArena - React Prototype</h1></header>
-      <div className="layout">
-        <div className="left">
-          <h2>Editor</h2>
-          <MonacoEditor value={code} onChange={(v)=>{ setCode(v); scheduleSave(v) }} language="python" />
+      <header>GameArena - React Prototype</header>
+  <div className="app-grid" style={{gridTemplateColumns: `${leftPanelRatio * 100}% ${(1 - leftPanelRatio) * 100}%`, gridTemplateRows: `${rowRatio * 100}% ${(1 - rowRatio) * 100}%`, position: 'relative'}}>
+        <div className="frame visualizer-frame">
+          <Visualizer
+            history={history}
+            index={currentIndex}
+            onPlayPause={togglePlayPause}
+            onStepBackward={stepBackward}
+            onStepForward={stepForward}
+            onSkipToStart={skipToStart}
+            onSkipToEnd={skipToEnd}
+            onSeek={(i) => seekToIndex(i)}
+            progressRatio={progressRatio}
+            currentIndex={currentIndex}
+            totalTurns={getTotalTurns()}
+            animationDelay={animationDelay}
+            setAnimationDelay={setAnimationDelay}
+            isAnimating={isAnimating}
+            isPaused={isPaused}
+          />
+        </div>
+
+        <div className="frame editor-frame">
+          <div style={{marginBottom: '8px'}}>
+            <select value={selectedLanguage} onChange={(e) => setSelectedLanguage(e.target.value)} style={{fontSize: '14px'}}>
+              <option value="python">Python 3</option>
+            </select>
+          </div>
+          <MonacoEditor value={code} onChange={(v)=>{ setCode(v); scheduleSave(v) }} language={selectedLanguage} theme={theme} />
           <div style={{marginTop:6, marginBottom:6}}>
             <small>Bot id: {botId || '—' } • Save status: {saveStatus}</small>
           </div>
-          <div className="controls">
-            <button onClick={startGame}
-                disabled={isCollecting} aria-busy={isCollecting} aria-live="polite"
-                style={{ fontSize: '16px', padding: '2px 7px' }}>
-              { isCollecting ? 'Collecting...' : '▶ Run my code' }
-            </button>
-            <button onClick={skipToStart} disabled={!(fullHistory && fullHistory.length>0)}>{'<<'}</button>
-            <button onClick={stepBackward} disabled={getTotalTurns() === 0} aria-label="Recule d'un tour">{'<'}</button>
-            <button
-              onClick={togglePlayPause}
-              // enabled when animating OR when we have a collected history (including when cursor is at end)
-              disabled={ !isAnimating && !(fullHistory && fullHistory.length>0) }
-              style={{ fontSize: '22px', padding: '2px 7px' }}
-            >
-              { isAnimating ? (isPaused ? '▶' : '⏸') : '▶' }
-            </button>
-            <button onClick={stepForward} disabled={getTotalTurns() === 0} aria-label="Avance d'un tour">{'>'}</button>
-            <button onClick={skipToEnd} disabled={!(fullHistory && fullHistory.length>0)}>{'>>'}</button>
-            <div style={{display:'inline-flex', alignItems:'center', gap:8, marginLeft:8}}>
-              <label style={{fontSize:12, color:'#666'}}>Speed:</label>
-              <input type="range" min={100} max={1000} step={50} value={animationDelay} onChange={(e)=> setAnimationDelay(Number(e.target.value))} />
-              <small style={{minWidth:70}}>{formatDelayLabel(animationDelay)} ({animationDelay}ms)</small>
-            </div>
+        </div>
 
-            {/* Remplacement des boutons "Check" par des indicateurs de statut */}
-            <div style={{display:'inline-flex', gap:12, alignItems:'center', marginLeft:12}}>
+        <div className="frame logs-frame">
+          <BotStderrPanel botLogs={history[currentIndex]?.bot_logs} globalStdout={history[currentIndex]?.__global_stdout} globalStderr={history[currentIndex]?.__global_stderr} />
+          {/* <div className="logs" style={{marginTop:12}}>
+            <pre style={{whiteSpace:'pre-wrap', margin:0}}>{combinedLogs}</pre>
+          </div> */}
+        </div>
+
+        <div className="frame controls-frame">
+          <button onClick={startGame} disabled={isCollecting} aria-busy={isCollecting} aria-live="polite" style={{ fontSize: '16px', padding: '8px 12px' }}>
+            { isCollecting ? 'Collecting...' : '▶ Run my code' }
+          </button>
+          <div className="controls-info">
+            <div className="status-row">
               {renderStatusBadge('Backend', backendStatus)}
               {renderStatusBadge('Docker', dockerStatus)}
             </div>
+            <div className="prefs-row">
+              <label className="pref">
+                Thème
+                <select value={theme} onChange={(e)=> setTheme(e.target.value)}>
+                  <option value="light">Clair</option>
+                  <option value="dark">Foncé</option>
+                </select>
+              </label>
 
-          </div>
-        </div>
-        <div className="center">
-          <h2>Visualizer</h2>
-          <Visualizer history={history} index={currentIndex} />
-          {/* Interactive progress bar to navigate history (click / drag / keyboard) */}
-          <div className="viz-controls">
-            <div
-              role="slider"
-              tabIndex={0}
-              onKeyDown={(e)=>{
-                // stop any automatic playback before manual keyboard seek
-                stopPlaybackPreserveState()
-                if(e.key === 'ArrowLeft') seekToIndex(Math.max(0, (currentIndex >= 0 ? currentIndex - 1 : 0)))
-                else if(e.key === 'ArrowRight') seekToIndex(Math.min(getTotalTurns() - 1, (currentIndex >= 0 ? currentIndex + 1 : 0)))
-              }}
-               onMouseDown={handleMouseDown}
-               onMouseMove={handleMouseMove}
-               onMouseUp={handleMouseUp}
-               onMouseLeave={handleMouseUp}
-               onClick={handleSeek}
-               style={{position:'relative', width:'100%', height:18, background:'#eee', borderRadius:8, cursor:'pointer', marginTop:6}}
-               aria-valuenow={currentIndex >= 0 ? currentIndex + 1 : 0}
-               aria-valuemin={0}
-               aria-valuemax={getTotalTurns()}
-            >
-              <div style={{position:'absolute', left:0, top:0, bottom:0, width: `${progressRatio * 100}%`, background:'#3b82f6', borderRadius:8}} />
-               {/* circular thumb showing current position */}
-               <div style={{
-                position:'absolute',
-                left: `calc(${progressRatio * 100}% - 8px)`,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                 width:16,
-                 height:16,
-                 borderRadius:'50%',
-                 background:'#fff',
-                 border:'2px solid #3b82f6',
-                 boxShadow:'0 2px 6px rgba(0,0,0,0.2)',
-                 pointerEvents: 'none'
-               }} />
+              <label className="pref">
+                Vitesse
+                <select value={animationDelay <= 200 ? 'fast' : animationDelay <= 500 ? 'medium' : 'slow'} onChange={(e)=>{
+                  const val = e.target.value
+                  const map = { slow: 800, medium: 500, fast: 200 }
+                  setAnimationDelay(map[val])
+                  try{ localStorage.setItem('gamearena_speed', val) }catch(err){}
+                }}>
+                  <option value="slow">Slow</option>
+                  <option value="medium">Medium</option>
+                  <option value="fast">Fast</option>
+                </select>
+              </label>
             </div>
-            <div style={{textAlign:'right', fontSize:12, color:'#444', marginTop:6}}>{Math.max(0, (currentIndex >= 0 ? currentIndex + 1 : 0))} / { getTotalTurns() } turns</div>
           </div>
         </div>
-        <div className="right">
-          <h2>Logs</h2>
-          <pre className="logs">{logs}</pre>
-        </div>
+        {/* Splitters placed relative to app-grid for manual resizing */}
+        <div className="app-splitter-vertical" style={{left: `${leftPanelRatio * 100}%`}} onMouseDown={handleVerticalSplitterMouseDown} />
+        <div className="app-splitter-horizontal" style={{top: `${rowRatio * 100}%`}} onMouseDown={handleHorizontalSplitterMouseDown} />
       </div>
     </div>
   )

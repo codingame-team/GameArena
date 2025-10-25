@@ -470,8 +470,10 @@ def step_game(game_id):
         state, stdout, stderr = ref.step(actions)
         entry = ref.history[-1]
         entry['bot_logs'] = {'player': player_log, 'opponent': opponent_log}
+        entry['__global_stdout'] = stdout
+        entry['__global_stderr'] = stderr
 
-        return jsonify({'state': state, 'stdout': stdout, 'stderr': stderr, 'history_entry': entry})
+        return jsonify({'state': state, 'history_entry': entry})
 
     except Exception as e:
         logging.getLogger(__name__).exception('Error in step_game for game_id=%s', game_id)

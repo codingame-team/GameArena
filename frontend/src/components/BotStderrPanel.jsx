@@ -1,59 +1,83 @@
-import React, {useEffect, useRef} from 'react'
+import React, {useEffect, useRef, useState} from 'react'
 
-export default function BotStderrPanel({botLogs}){
+// BotStderrPanel: simplified dropdown (button + popup with checkboxes)
+export default function BotStderrPanel({botLogs, globalStdout, globalStderr}){
   const player = (botLogs && botLogs.player) || {}
   const opponent = (botLogs && botLogs.opponent) || {}
   const playerErr = player.stderr || ''
   const opponentErr = opponent.stderr || ''
   const playerOut = player.stdout || ''
   const opponentOut = opponent.stdout || ''
-  const playerMeta = `${player.runner || ''}${player.path ? ' • ' + player.path : ''}${player.parsed ? ' • parsed' : ''}`
-  const opponentMeta = `${opponent.runner || ''}${opponent.path ? ' • ' + opponent.path : ''}${opponent.parsed ? ' • parsed' : ''}`
 
-  const playerErrRef = useRef(null)
-  const playerOutRef = useRef(null)
-  const opponentErrRef = useRef(null)
-  const opponentOutRef = useRef(null)
+  // filters
+  const allFilters = ['Informations de jeu', 'Sortie standard', "Sortie d'erreur"]
+  const [enabledFilters, setEnabledFilters] = useState(allFilters)
+  const [isOpen, setIsOpen] = useState(false)
 
-  useEffect(()=>{
-    if(playerErrRef.current) playerErrRef.current.scrollTop = playerErrRef.current.scrollHeight
-  }, [playerErr])
-  useEffect(()=>{
-    if(playerOutRef.current) playerOutRef.current.scrollTop = playerOutRef.current.scrollHeight
-  }, [playerOut])
-  useEffect(()=>{
-    if(opponentErrRef.current) opponentErrRef.current.scrollTop = opponentErrRef.current.scrollHeight
-  }, [opponentErr])
-  useEffect(()=>{
-    if(opponentOutRef.current) opponentOutRef.current.scrollTop = opponentOutRef.current.scrollHeight
-  }, [opponentOut])
+  const dropdownRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleToggle = (f) => {
+    setEnabledFilters(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f])
+  }
 
   return (
     <div className="bot-logs">
-      <div className="panel">
-        <h4>Player</h4>
-        <div style={{fontSize:12, color:'#ddd', marginBottom:6}}>{playerMeta}</div>
-        <div>
-          <strong>stderr</strong>
-          <pre ref={playerErrRef} className="logs player">{playerErr}</pre>
-        </div>
-        <div>
-          <strong>stdout</strong>
-          <pre ref={playerOutRef} className="logs">{playerOut}</pre>
-        </div>
-      </div>
-      <div className="panel">
-        <h4>Opponent</h4>
-        <div style={{fontSize:12, color:'#ddd', marginBottom:6}}>{opponentMeta}</div>
-        <div>
-          <strong>stderr</strong>
-          <pre ref={opponentErrRef} className="logs opponent">{opponentErr}</pre>
-        </div>
-        <div>
-          <strong>stdout</strong>
-          <pre ref={opponentOutRef} className="logs">{opponentOut}</pre>
-        </div>
+      <div className="bot-logs-right">
+          <div className="dropdown" ref={dropdownRef}>
+            <button className="dropdown-toggle" onClick={() => setIsOpen(!isOpen)}>
+              Filtre: {enabledFilters.length === allFilters.length ? 'Tous' : enabledFilters.join(', ')} ▾
+            </button>
+            {isOpen && (
+              <div className="dropdown-content dropdown-content-left">
+                {allFilters.map(f => (
+                  <label key={f} className="dropdown-item">
+                    <input type="checkbox" checked={enabledFilters.includes(f)} onChange={() => handleToggle(f)} />
+                    <span style={{marginLeft:8}}>{f}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        <div className="panel">
+        {enabledFilters.includes("Sortie standard") && (
+          <div>
+            <h4 style={{color: 'green'}}>Sortie standard:</h4>
+            <pre style={{color: 'green', margin: 0}}>[Player] {playerOut}</pre>
+            <pre style={{color: 'pink', margin: 0}}>[Opponent] {opponentOut}</pre>
+          </div>
+        )}
+
+        {enabledFilters.includes("Sortie d'erreur") && (
+          <div>
+            <h4>Sortie d'erreur</h4>
+            <pre>{playerErr}</pre>
+          </div>
+        )}
+
+        {enabledFilters.includes("Informations de jeu") && (
+          <section className="panel-section">
+            <h4>Résumé du jeu</h4>
+            <div className="game-info" style={{whiteSpace: 'pre-wrap', fontSize:12}}>{globalStdout || '—'}</div>
+          </section>
+        )}
+
+        {enabledFilters.length === 0 && (
+          <div className="empty" style={{textAlign: 'center', color: '#999', padding: '16px'}}>
+            Aucune option sélectionnée
+          </div>
+        )}
       </div>
     </div>
+  </div>
   )
 }

@@ -1,25 +1,186 @@
 :root{ --gap:12px }
-body{ font-family: Arial, Helvetica, sans-serif; margin:0 }
-header{ background:#222; color:#fff; padding:12px }
-.layout{ display:flex; gap:var(--gap); padding:12px }
-.left{ width:36%; }
-.center{ width:40%; }
-.right{ width:24%; }
+
+/* Theme variables (light by default) */
+:root{
+  --bg: #f5f6f7;
+  --text: #111;
+  --header-bg: #222;
+  --frame-bg: #fff;
+  --muted: #666;
+  --primary: #1b8;
+  --panel-bg: #fff;
+  --log-bg: #0b0b0b;
+  --log-color: #0f0;
+  /* grid cell sizing and player/opponent colors */
+  --cell-size: 80px;
+  --player-bg: #cfe;
+  --opponent-bg: #fec;
+  --player-color: #064;
+  --opponent-color: #600;
+}
+
+.theme-dark{
+  --bg: #0b0c0d;
+  --text: #e6e6e6;
+  --header-bg: #111;
+  --frame-bg: #0f1112;
+  --muted: #999;
+  --primary: #1b8;
+  --panel-bg: #0b0c0d;
+  --log-bg: #070707;
+  --log-color: #6cf;
+  --cell-size: 80px;
+  --player-bg: #063; /* darker green */
+  --opponent-bg: #630; /* darker red/brown */
+  --player-color: #bff;
+  --opponent-color: #ffd;
+}
+
+html, body{ height:100%; overflow: hidden }
+body{ font-family: Arial, Helvetica, sans-serif; margin:0; background:var(--bg); color:var(--text) }
+header{ background:var(--header-bg); color:var(--text); padding:12px }
+
+/* App grid: 2x2 frames */
+.app-grid{
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 300px;
+  grid-template-areas:
+    "visualizer editor"
+    "logs controls";
+  height: calc(100vh - 64px);
+  position: relative; /* needed for splitters */
+}
+
+.frame { background:var(--frame-bg); border-radius:6px; padding:12px; box-shadow:0 1px 4px rgba(0,0,0,0.05); overflow:hidden }
+.frame h3{ margin:0 0 8px 0 }
+
+.visualizer-frame{ grid-area: visualizer }
+.editor-frame{ grid-area: editor; display:flex; flex-direction:column }
+.logs-frame{ grid-area: logs; display:flex; flex-direction:column }
+.controls-frame{ grid-area: controls; display:flex; flex-direction:column; align-items:center; justify-content:center }
+
 .controls{ margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center }
 .controls .speed-group{ display:inline-flex; align-items:center; gap:8px; margin-left:8px }
+
+/* Controls-frame rearrangement and badge styles */
+.controls-frame .controls-info{ display:flex; flex-direction:column; gap:10px; margin-top:12px; align-items:flex-start }
+.controls-frame .status-row{ display:flex; gap:12px; align-items:center }
+.status-text{ color:var(--muted); font-size:13px }
+.theme-dark .status-text{ color:var(--text) }
+.controls-frame .prefs-row{ display:flex; gap:12px; align-items:center }
+.controls-frame .pref{ display:inline-flex; flex-direction:column; font-size:12px }
+.controls-frame .pref select{ margin-top:6px }
 .viz-controls{ margin-top:8px; display:flex; gap:8px; align-items:center }
+
 .grid{ display:flex; flex-direction:column; gap:2px }
 .row{ display:flex; gap:2px }
-.cell{ width:28px; height:28px; border:1px solid #ddd; display:flex; align-items:center; justify-content:center; background:#fff }
-.cell.P{ background:#cfe }
-.cell.O{ background:#fec }
-.logs{ background:#111; color:#0f0; padding:8px; height:300px; overflow:auto }
+/* cell sizing via CSS variable so letters scale with cell size */
+.cell{ width:var(--cell-size); height:var(--cell-size); border:1px solid #ddd; display:flex; align-items:center; justify-content:center; background:var(--frame-bg); font-weight:700; font-size: calc(var(--cell-size) * 0.45) }
+.cell.P{ background:var(--player-bg); color:var(--player-color) }
+.cell.O{ background:var(--opponent-bg); color:var(--opponent-color) }
+.logs{ background:var(--log-bg); color:var(--log-color); padding:8px; height:100%; overflow:auto; border-radius:6px }
+
+/* Visualizer component controls */
+.visualizer{ display:flex; flex-direction:column; height:100% }
+.visualizer-canvas{ flex:1; display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; gap:8px; padding:8px; box-sizing:border-box; min-height:0 }
+.visualizer-controls{ margin-top:8px; display:flex; gap:12px; align-items:center }
+.visualizer-controls .nav-buttons{ display:flex; gap:8px; align-items:center }
+.visualizer-controls .nav-buttons button{ background:none; border:none; font-size:20px; cursor:pointer }
+
+/* More visible nav buttons in dark theme */
+.theme-dark .visualizer-controls .nav-buttons button{
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 6px 8px;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.theme-dark .visualizer-controls .nav-buttons button:hover{
+  background: rgba(255,255,255,0.12);
+}
+.theme-dark .visualizer-controls .nav-buttons button:focus{
+  outline: 2px solid rgba(27,136,136,0.25);
+  outline-offset: 2px;
+}
+
+/* Splitters more visible in dark theme */
+.theme-dark .app-splitter-vertical{
+  width: 10px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+  transform: translateX(-50%);
+}
+.theme-dark .app-splitter-vertical:hover{
+  background: linear-gradient(90deg, rgba(255,255,255,0.26), rgba(255,255,255,0.12));
+}
+.theme-dark .app-splitter-horizontal{
+  height: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+  transform: translateY(-50%);
+}
+.theme-dark .app-splitter-horizontal:hover{
+  background: linear-gradient(180deg, rgba(255,255,255,0.26), rgba(255,255,255,0.12));
+}
+
+.visualizer-slider{ margin-top:8px; display:flex; flex-direction:column; gap:6px; align-items:stretch }
+.visualizer-slider .visualizer-range{ width:100%; }
+.visualizer-controls .speed-control{ margin-left:16px }
+.visualizer-controls .progress-label{ font-size:12px; color:#444 }
+.visualizer-controls .speed-control{ display:flex; align-items:center; gap:8px }
+.visualizer-controls .speed-control input[type="range"]{ width:160px }
+
+/* Splitters for manual resize between grid frames */
+.app-splitter-vertical{
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: rgba(0,0,0,0.06);
+  cursor: col-resize;
+  z-index: 40;
+  transform: translateX(-50%);
+}
+.app-splitter-horizontal{
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background: rgba(0,0,0,0.06);
+  cursor: row-resize;
+  z-index: 40;
+  transform: translateY(-50%);
+}
 
 /* New styles for BotStderrPanel */
-.bot-logs{ display:flex; gap:8px; margin-top:12px }
-.bot-logs .panel{ flex:1; display:flex; flex-direction:column; gap:6px }
+.bot-logs{ display:flex; gap:8px; margin-top:12px; align-items:stretch; height:100%; justify-content:flex-end }
+.bot-logs .panel{ flex:1; display:flex; flex-direction:column; gap:6px; min-height:0; overflow-y:auto }
+
+/* Right-aligned stack (dropdown above panel) */
+.bot-logs-right{ display:flex; flex-direction:column; align-items:flex-start; gap:8px }
+.bot-logs-right .panel{ width:380px; flex:none; max-height: calc(100% - 56px); overflow-y:auto; padding-top:6px }
+
+/* Anchor dropdown popup to right edge */
+.dropdown{ position:relative }
+.dropdown-toggle{ min-width:140px }
+.dropdown-content{ position:absolute; top:calc(100% + 6px); left:0; background:#fff; border:1px solid #ddd; box-shadow:0 6px 18px rgba(0,0,0,0.08); z-index:200; max-height:220px; overflow:auto; border-radius:4px; padding:6px }
+.dropdown-content-left{ left:0; right:auto }
+.dropdown-item{ display:flex; align-items:center; gap:8px; padding:6px 8px; cursor:pointer; font-size:12px }
+.dropdown-item:hover{ background: rgba(0,0,0,0.04) }
+
+/* Dark-theme tweaks for dropdown contrast */
+.theme-dark .dropdown-content{ background: #0b0c0d; border:1px solid rgba(255,255,255,0.08); box-shadow: 0 6px 18px rgba(0,0,0,0.6); }
+.theme-dark .dropdown-item{ color: var(--text) }
+.theme-dark .dropdown-item:hover{ background: rgba(255,255,255,0.04) }
+
+/* Ensure the .frame inside the logs grid cell fills the available height so the panel can scroll */
+.logs-frame > .frame { height:100%; box-sizing:border-box; display:flex; flex-direction:column; min-height:0 }
 .bot-logs .panel h4{ margin:0 0 4px 0; font-size:14px }
-.bot-logs .logs{ background:#111; color:#f66; padding:8px; height:160px; overflow:auto; border-radius:4px }
+.bot-logs .logs{ background:#111; color:#f66; padding:8px; overflow:visible; border-radius:4px }
 .bot-logs .logs.player{ color:#f66 } /* red-ish for player stderr */
 .bot-logs .logs.opponent{ color:#6cf } /* cyan-ish for opponent stderr */
 .bot-logs .panel strong{ display:block; margin-top:6px; color:#ddd }
@@ -36,3 +197,20 @@ header{ background:#222; color:#fff; padding:12px }
 
 /* Playing indicator */
 .playing-indicator{ display:inline-block; background:#1b8; color:#022; padding:4px 8px; border-radius:6px; font-weight:700 }
+
+/* Responsive design for smaller screens */
+@media (max-width: 768px) {
+  .layout { flex-direction: column; gap: 8px; }
+  .left, .center, .right { width: 100%; }
+  .controls { flex-direction: column; align-items: stretch; gap: 4px; }
+  .controls button { width: 100%; padding: 8px; font-size: 16px; }
+  .viz-controls { flex-direction: column; align-items: stretch; gap: 4px; }
+  .grid { gap: 1px; }
+  .row { gap: 1px; }
+  .cell { width: 20px; height: 20px; font-size: 12px; }
+  .logs { height: 200px; font-size: 12px; }
+  .bot-logs { flex-direction: column; gap: 4px; }
+  .bot-logs .logs { height: 120px; font-size: 12px; }
+  .viz-controls input[type="range"] { width: 100%; }
+  .playing-indicator { font-size: 14px; padding: 2px 4px; }
+}
