@@ -35,6 +35,7 @@ export default function Visualizer({
   onSkipToStart,
   onSkipToEnd,
   onSeek,
+  onUserSeekStart,
   progressRatio,
   currentIndex,
   totalTurns,
@@ -52,25 +53,35 @@ export default function Visualizer({
 
         {/* Slider full-width under the Grid (inside the canvas) */}
         <div className="visualizer-slider" data-component="Visualizer.Slider">
-          <input className="visualizer-range" type="range" min={0} max={Math.max(0, totalTurns - 1)} value={currentIndex >= 0 ? currentIndex : 0} onChange={(e)=> onSeek && onSeek(Number(e.target.value))} />
-          <div className="progress-label">{Math.max(0, (currentIndex >= 0 ? currentIndex + 1 : 0))} / { totalTurns }</div>
+          <input
+            className="visualizer-range"
+            type="range"
+            min={0}
+            max={Math.max(0, totalTurns - 1)}
+            value={currentIndex >= 0 ? currentIndex : 0}
+            onChange={(e)=> onSeek && onSeek(Number(e.target.value))}
+            onMouseDown={(e) => onUserSeekStart && onUserSeekStart(e)}
+            onTouchStart={(e) => onUserSeekStart && onUserSeekStart(e)}
+          />
         </div>
 
         {/* Controls inside the canvas so slider and controls stay grouped with the visual area */}
         <div className="visualizer-controls" data-component="Visualizer.Controls" style={{justifyContent:'flex-start'}}>
           <div className="nav-buttons">
             <button onClick={onSkipToStart} aria-label="skip-to-start">⏮</button>
-            <button onClick={onStepBackward} aria-label="step-back">◀</button>
+            <button onClick={onStepBackward} aria-label="step-back">{'<'}</button>
             <button onClick={onPlayPause} aria-label="play-pause">{ isAnimating ? (isPaused ? '▶' : '⏸') : '▶' }</button>
-            <button onClick={onStepForward} aria-label="step-forward">▶</button>
+            <button onClick={onStepForward} aria-label="step-forward">{'>'}</button>
             <button onClick={onSkipToEnd} aria-label="skip-to-end">⏭</button>
           </div>
+          <div className="progress-label">{Math.max(0, (currentIndex >= 0 ? currentIndex + 1 : 0))} / { totalTurns }</div>
 
-          <div className="speed-control">
+
+          {/* <div className="speed-control">
             <label>Speed</label>
             <input type="range" min={100} max={1000} step={50} value={animationDelay} onChange={(e)=> setAnimationDelay(Number(e.target.value))} />
             <small>{animationDelay}ms</small>
-          </div>
+          </div> */}
         </div>
       </div>
     </div>

@@ -40,27 +40,38 @@ html, body{ height:100%; overflow: hidden }
 body{ font-family: Arial, Helvetica, sans-serif; margin:0; background:var(--bg); color:var(--text) }
 header{ background:var(--header-bg); color:var(--text); padding:12px }
 
-/* App grid: 2x2 frames */
+/* App grid: left/right columns with independent splitters */
 .app-grid{
   display: grid;
   gap: 12px;
   padding: 12px;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 300px;
-  grid-template-areas:
-    "visualizer editor"
-    "logs controls";
+  grid-template-rows: 1fr;
   height: calc(100vh - 64px);
   position: relative; /* needed for splitters */
 }
 
-.frame { background:var(--frame-bg); border-radius:6px; padding:12px; box-shadow:0 1px 4px rgba(0,0,0,0.05); overflow:hidden }
+/* Left and right columns are nested grids; ensure they fill available space */
+.left-column, .right-column {
+  min-height: 0;
+  display: grid;
+  position: relative;
+  gap: 12px;
+}
+
+.frame { 
+  background: var(--frame-bg); 
+  border-radius: 6px; 
+  padding: 12px; 
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05); 
+  overflow: hidden;
+  min-height: 0; /* allow shrinking so content can scroll internally */
+  display: flex;
+  flex-direction: column;
+}
 .frame h3{ margin:0 0 8px 0 }
 
-.visualizer-frame{ grid-area: visualizer }
-.editor-frame{ grid-area: editor; display:flex; flex-direction:column }
-.logs-frame{ grid-area: logs; display:flex; flex-direction:column }
-.controls-frame{ grid-area: controls; display:flex; flex-direction:column; align-items:center; justify-content:center }
+.controls-frame{ display:flex; flex-direction:column; align-items:center; justify-content:center }
 
 .controls{ margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center }
 .controls .speed-group{ display:inline-flex; align-items:center; gap:8px; margin-left:8px }
@@ -77,8 +88,9 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
 
 .grid{ display:flex; flex-direction:column; gap:2px }
 .row{ display:flex; gap:2px }
-/* cell sizing via CSS variable so letters scale with cell size */
-.cell{ width:var(--cell-size); height:var(--cell-size); border:1px solid #ddd; display:flex; align-items:center; justify-content:center; background:var(--frame-bg); font-weight:700; font-size: calc(var(--cell-size) * 0.45) }
+/* Keep cells square regardless of container size: use flex + aspect-ratio so
+  each cell adapts to the available width while preserving 1:1 proportions. */
+.cell{ flex: 1 1 0; aspect-ratio: 1 / 1; border:1px solid #ddd; display:flex; align-items:center; justify-content:center; background:var(--frame-bg); font-weight:700; font-size: calc(var(--cell-size) * 0.28) }
 .cell.P{ background:var(--player-bg); color:var(--player-color) }
 .cell.O{ background:var(--opponent-bg); color:var(--opponent-color) }
 .logs{ background:var(--log-bg); color:var(--log-color); padding:8px; height:100%; overflow:auto; border-radius:6px }
@@ -92,45 +104,59 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
 
 /* More visible nav buttons in dark theme */
 .theme-dark .visualizer-controls .nav-buttons button{
-  background: rgba(255,255,255,0.06);
+  background: transparent; /* remove background color in dark theme */
   color: var(--text);
-  border: 1px solid rgba(255,255,255,0.12);
+  /* remove border in dark theme for cleaner look */
+  border: none;
   padding: 6px 8px;
   border-radius: 6px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  box-shadow: none; /* remove shadow so buttons blend with dark UI */
 }
 .theme-dark .visualizer-controls .nav-buttons button:hover{
-  background: rgba(255,255,255,0.12);
+  background: transparent;
 }
 .theme-dark .visualizer-controls .nav-buttons button:focus{
   outline: 2px solid rgba(27,136,136,0.25);
   outline-offset: 2px;
 }
 
+/* Increase contrast of progress label in dark theme */
+.theme-dark .visualizer-controls .progress-label{
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* Splitters more visible in dark theme */
 .theme-dark .app-splitter-vertical{
-  width: 10px;
-  background: linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06));
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+  width: 12px;
+  /* stronger gradient and inner border for high contrast on very dark backgrounds */
+  background: linear-gradient(90deg, rgba(255,255,255,0.26), rgba(255,255,255,0.10));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14), 0 2px 8px rgba(0,0,0,0.6);
+  border-left: 1px solid rgba(255,255,255,0.06);
+  border-right: 1px solid rgba(255,255,255,0.04);
   transform: translateX(-50%);
 }
 .theme-dark .app-splitter-vertical:hover{
-  background: linear-gradient(90deg, rgba(255,255,255,0.26), rgba(255,255,255,0.12));
+  background: linear-gradient(90deg, rgba(255,255,255,0.36), rgba(255,255,255,0.16));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18), 0 4px 12px rgba(0,0,0,0.6);
 }
 .theme-dark .app-splitter-horizontal{
-  height: 10px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06));
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+  height: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.26), rgba(255,255,255,0.10));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14), 0 2px 8px rgba(0,0,0,0.6);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
   transform: translateY(-50%);
 }
 .theme-dark .app-splitter-horizontal:hover{
-  background: linear-gradient(180deg, rgba(255,255,255,0.26), rgba(255,255,255,0.12));
+  background: linear-gradient(180deg, rgba(255,255,255,0.36), rgba(255,255,255,0.16));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18), 0 4px 12px rgba(0,0,0,0.6);
 }
 
 .visualizer-slider{ margin-top:8px; display:flex; flex-direction:column; gap:6px; align-items:stretch }
 .visualizer-slider .visualizer-range{ width:100%; }
 .visualizer-controls .speed-control{ margin-left:16px }
-.visualizer-controls .progress-label{ font-size:12px; color:#444 }
+.visualizer-controls .progress-label{ font-size:16px; color:#444 }
 .visualizer-controls .speed-control{ display:flex; align-items:center; gap:8px }
 .visualizer-controls .speed-control input[type="range"]{ width:160px }
 
@@ -156,13 +182,25 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
   transform: translateY(-50%);
 }
 
-/* New styles for BotStderrPanel */
-.bot-logs{ display:flex; gap:8px; margin-top:12px; align-items:stretch; height:100%; justify-content:flex-end }
-.bot-logs .panel{ flex:1; display:flex; flex-direction:column; gap:6px; min-height:0; overflow-y:auto }
+/* BotStderrPanel layout: use panel-split with left/right columns. */
+.panel-right > .dropdown{ align-self:flex-start; flex-shrink: 0; }
+.panel-right .panel{ /* allow nested panels to grow if present */
+  flex:1; min-width:320px; overflow-y:auto; padding-top:6px; display:flex; box-sizing:border-box
+}
 
-/* Right-aligned stack (dropdown above panel) */
-.bot-logs-right{ display:flex; flex-direction:column; align-items:flex-start; gap:8px }
-.bot-logs-right .panel{ width:380px; flex:none; max-height: calc(100% - 56px); overflow-y:auto; padding-top:6px }
+/* Split the panel into two vertical columns: left = ranking, right = logs/sections */
+.panel-split{ display:flex; gap:12px; align-items:stretch; height: 100%; overflow: hidden; }
+.panel-left{ width:220px; flex:none; background:var(--panel-bg); border-radius:6px; padding:8px; box-shadow:0 1px 6px rgba(0,0,0,0.04); min-height:0; overflow-y: auto; }
+.panel-right{ flex:1; min-height:0; overflow-y: auto; padding:6px; display: flex; flex-direction: column; }
+.ranking{ font-size:13px }
+.ranking h4{ margin:0 0 8px 0 }
+.ranking ol{ margin:0; padding-left:18px }
+.ranking-item{ display:flex; align-items:center; gap:8px; padding:6px 0 }
+.ranking-item .pos{ width:18px; font-weight:700 }
+.ranking-item .name{ flex:1; text-transform:capitalize }
+.ranking-item .score{ font-weight:700; color:var(--muted) }
+.ranking-item.winner .name{ color:var(--primary); font-weight:800 }
+.draw{ margin-top:8px; color:var(--muted); font-size:13px }
 
 /* Anchor dropdown popup to right edge */
 .dropdown{ position:relative }
@@ -178,12 +216,29 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
 .theme-dark .dropdown-item:hover{ background: rgba(255,255,255,0.04) }
 
 /* Ensure the .frame inside the logs grid cell fills the available height so the panel can scroll */
-.logs-frame > .frame { height:100%; box-sizing:border-box; display:flex; flex-direction:column; min-height:0 }
-.bot-logs .panel h4{ margin:0 0 4px 0; font-size:14px }
-.bot-logs .logs{ background:#111; color:#f66; padding:8px; overflow:visible; border-radius:4px }
-.bot-logs .logs.player{ color:#f66 } /* red-ish for player stderr */
-.bot-logs .logs.opponent{ color:#6cf } /* cyan-ish for opponent stderr */
-.bot-logs .panel strong{ display:block; margin-top:6px; color:#ddd }
+.logs-frame > .frame { height:100%; box-sizing:border-box; display:flex; flex-direction:column; min-height:0; overflow: hidden; }
+.panel-right h4{ margin:0 0 4px 0; font-size:14px }
+.panel-right .logs{ background:#111; color:#f66; padding:8px; overflow:visible; border-radius:4px }
+.panel-right .logs.player{ color:#f66 } /* red-ish for player stderr */
+.panel-right .logs.opponent{ color:#6cf } /* cyan-ish for opponent stderr */
+.panel-right .panel strong{ display:block; margin-top:6px; color:#ddd }
+
+/* Turn list display in panel-right: each turn separated by hr, with index on right */
+.turns-list { display: flex; flex-direction: column; gap: 0; flex: 1; min-height: 0; overflow-y: auto; }
+.turn-block { padding: 12px 8px; transition: background 0.2s ease; }
+.turn-block:hover { background: rgba(0, 0, 0, 0.02); }
+.theme-dark .turn-block:hover { background: rgba(255, 255, 255, 0.03); }
+.turn-block.turn-active { background: rgba(27, 136, 136, 0.08); border-left: 3px solid var(--primary); padding-left: 5px; }
+.theme-dark .turn-block.turn-active { background: rgba(27, 136, 136, 0.15); }
+.turn-header { display: flex; gap: 12px; align-items: flex-start; }
+.turn-content { flex: 1; min-width: 0; }
+.turn-index { flex: 0 0 auto; color: var(--muted); font-weight: 700; text-align: right; min-width: 50px; font-size: 14px; }
+.turn-section { margin-bottom: 12px; }
+.turn-section:last-child { margin-bottom: 0; }
+.turn-section-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; color: var(--text); }
+.turn-pre { margin: 0; font-size: 12px; white-space: pre-wrap; word-wrap: break-word; color: var(--muted); background: var(--log-bg); padding: 6px 8px; border-radius: 4px; overflow-x: auto; }
+.turn-separator { border: none; border-top: 1px solid rgba(0, 0, 0, 0.08); margin: 0; }
+.theme-dark .turn-separator { border-top-color: rgba(255, 255, 255, 0.08); }
 
 /* Slider / progress bar for history navigation */
 .viz-controls input[type="range"]{ -webkit-appearance:none; appearance:none; height:6px; background:#ddd; border-radius:6px }
