@@ -503,7 +503,7 @@ export default function App() {
         
         {/* LEFT COLUMN: Visualizer (top) + Logs (bottom) with independent horizontal splitter */}
         <div className="left-column" ref={leftContainerRef} style={{ gridArea: 'left-col', display: 'grid', gridTemplateRows: `${rowRatio * 100}% ${(1 - rowRatio) * 100}%`, position: 'relative', minHeight: 0 }}>
-          <div className="frame visualizer-frame">
+          <div className="frame visualizer-frame" style={{ display: 'flex', flexDirection: 'column' }}>
             <Visualizer
               history={history}
               index={currentIndex}

@@ -97,10 +97,40 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
 
 /* Visualizer component controls */
 .visualizer{ display:flex; flex-direction:column; height:100% }
-.visualizer-canvas{ flex:1; display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; gap:8px; padding:8px; box-sizing:border-box; min-height:0 }
-.visualizer-controls{ margin-top:8px; display:flex; gap:12px; align-items:center }
+.visualizer-canvas{ 
+  flex:1; 
+  display:flex; 
+  flex-direction:column; 
+  align-items:stretch; 
+  justify-content:flex-start; 
+  gap:0; 
+  padding:8px; 
+  box-sizing:border-box; 
+  min-height:0 
+}
+.visualizer-controls{ 
+  margin-top:8px; 
+  display:flex; 
+  gap:12px; 
+  align-items:center;
+  background: #222;
+  padding: 12px;
+  border-radius: 6px;
+}
 .visualizer-controls .nav-buttons{ display:flex; gap:8px; align-items:center }
-.visualizer-controls .nav-buttons button{ background:none; border:none; font-size:20px; cursor:pointer }
+.visualizer-controls .nav-buttons button{ 
+  background:none; 
+  border:none; 
+  font-size:20px; 
+  cursor:pointer;
+  color: #fff;
+  opacity: 0.9;
+  transition: opacity 0.2s;
+}
+.visualizer-controls .nav-buttons button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
 
 /* More visible nav buttons in dark theme */
 .theme-dark .visualizer-controls .nav-buttons button{
@@ -153,10 +183,29 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18), 0 4px 12px rgba(0,0,0,0.6);
 }
 
-.visualizer-slider{ margin-top:8px; display:flex; flex-direction:column; gap:6px; align-items:stretch }
-.visualizer-slider .visualizer-range{ width:100%; }
+.visualizer-slider{ 
+  margin-top:0; 
+  display:flex; 
+  flex-direction:column; 
+  gap:6px; 
+  align-items:stretch;
+  opacity: 0.9;
+  transition: opacity 0.2s;
+}
+.visualizer-slider .visualizer-range{ 
+  width:100%;
+  cursor: pointer;
+}
+.visualizer-slider .visualizer-range:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
 .visualizer-controls .speed-control{ margin-left:16px }
-.visualizer-controls .progress-label{ font-size:16px; color:#444 }
+.visualizer-controls .progress-label{ 
+  font-size:16px; 
+  color:#fff;
+  opacity: 0.9;
+}
 .visualizer-controls .speed-control{ display:flex; align-items:center; gap:8px }
 .visualizer-controls .speed-control input[type="range"]{ width:160px }
 

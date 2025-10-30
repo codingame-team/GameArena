@@ -160,6 +160,8 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
         {Array.isArray(fullHistory) && fullHistory.length > 0 && (
           <div className="turns-list" ref={turnsListRef}>
             {fullHistory.map((entry, idx) => {
+              // Skip turn 0
+              if (idx === 0) return null
               const isActive = idx === currentIndex
               const botLogs = entry?.bot_logs || {}
               const playerLog = botLogs.player || {}
@@ -168,11 +170,19 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
               const opponentStdout = opponentLog.stdout || ''
               const playerStderr = playerLog.stderr || ''
               const opponentStderr = opponentLog.stderr || ''
-              const summary = entry?.__global_stdout || ''
+              // Combine global stdout and global stderr so referee messages (e.g. collisions)
+              // appear in the game summary panel. Preserve ordering: stdout first, then stderr.
+              let summary = ''
+              if (entry) {
+                const gOut = entry.__global_stdout || ''
+                const gErr = entry.__global_stderr || ''
+                if (gOut && gErr) summary = gOut + '\n' + gErr
+                else summary = gOut || gErr || ''
+              }
 
               return (
-                <div 
-                  key={idx} 
+                <div
+                  key={idx+1}
                   ref={el => turnRefs.current[idx] = el}
                   className={`turn-block ${isActive ? 'turn-active' : ''}`}
                   onClick={() => onTurnClick && onTurnClick(idx)}
@@ -209,7 +219,7 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
                       )}
                     </div>
 
-                    <div className="turn-index">{idx + 1}/{fullHistory.length}</div>
+                    <div className="turn-index">{idx}/{fullHistory.length - 1}</div>
                   </div>
 
                   {idx < fullHistory.length - 1 && <hr className="turn-separator" />}
