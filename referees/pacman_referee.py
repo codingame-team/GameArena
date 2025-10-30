@@ -31,11 +31,27 @@ class PacmanReferee(Referee):
             'player': (0,0),
             'opponent': (self.width-1, self.height-1)
         }
+        # Ensure we don't place a pellet on the player's or opponent's initial cell
+        try:
+            self.pellets.discard(self.pacs.get('player'))
+            self.pellets.discard(self.pacs.get('opponent'))
+        except Exception:
+            pass
         # map pac ids to owners: pac id 0 = player, 1 = opponent (keeps compatibility with make_bot_input)
         self.owner_map = {0: 'player', 1: 'opponent'}
         self.turn = 0
         self.history = []
         self.logs = []
+
+        # Create initial history entry for turn 0 (starting state before any actions)
+        initial_state = self.get_state()
+        self.history.append({
+            'turn': 0,
+            'state': initial_state,
+            'actions': {},
+            'stdout': '',
+            'stderr': ''
+        })
 
     def get_protocol(self):
         return {
@@ -176,10 +192,17 @@ class PacmanReferee(Referee):
         stdout = ''
         stderr = ''
         # Apply actions: accept commands like 'MOVE <pac_id> <x> <y>' (possibly multiple separated by ';') or 'STAY'
+        # We'll first compute intended targets for each bot, then resolve collisions/conflicts before committing.
         new_positions = {}
         # Start from current positions
         for bot_id, pos in self.pacs.items():
             new_positions[bot_id] = pos
+        # current positions copy
+        curr_positions = self.pacs.copy()
+        # intended target per bot (None means no move / invalid)
+        intended = {bot_id: None for bot_id in self.pacs.keys()}
+
+        # First pass: parse commands and build intended targets (do not resolve collisions yet)
         for bot_id, action in actions_by_bot.items():
             if not action:
                 continue
@@ -206,16 +229,85 @@ class PacmanReferee(Referee):
                         # compute clamped target
                         nx = max(0, min(self.width-1, tx))
                         ny = max(0, min(self.height-1, ty))
-                        # set new position for this owner
-                        new_positions[bot_id] = (nx, ny)
-                        stdout += f"{bot_id} moves pac{pid} -> {nx,ny}\n"
+                        # if target equals current position -> invalid (no-op)
+                        current_pos = curr_positions.get(bot_id)
+                        if (nx, ny) == current_pos:
+                            stderr += f"{bot_id} attempted MOVE to its current cell {current_pos}; did not move\n"
+                            intended[bot_id] = None
+                            # stop processing further subcommands for this bot
+                            break
+                        # record the intended move for now
+                        intended[bot_id] = (nx, ny)
+                        # only consider the first valid MOVE for this bot in this turn
+                        break
                     else:
                         stderr += f"{bot_id} bad MOVE format: {sub}\n"
                 elif parts[0].upper() == 'STAY':
-                    # no-op for this subcommand
-                    stdout += f"{bot_id} stays at {self.pacs.get(bot_id)}\n"
+                    # explicit no-op
+                    intended[bot_id] = None
+                    break
                 else:
                     stderr += f"{bot_id} unknown command: {sub}\n"
+
+        # Second pass: detect collisions where multiple bots intend the same target
+        # Build mapping target -> list of bots intending it
+        target_map = {}
+        for b, tgt in intended.items():
+            if tgt is None:
+                continue
+            target_map.setdefault(tgt, []).append(b)
+        # For any target with multiple bots, cancel moves for all involved and record errors
+        for tgt, bots in target_map.items():
+            if len(bots) > 1:
+                # collision: none of these bots move
+                # Build human-readable participant names (capitalize)
+                parts = [b.capitalize() for b in bots]
+                if len(parts) == 2:
+                    participants = f"{parts[0]} and {parts[1]}"
+                else:
+                    # Oxford-style list: A, B and C
+                    participants = ', '.join(parts[:-1]) + ' and ' + parts[-1]
+                # Match the user's requested phrasing (note: 'occured' spelled as requested)
+                stderr += f"Collision occured between {participants} on cell {tgt}\n"
+                for b in bots:
+                    intended[b] = None
+
+        # Third pass: prevent moving into a cell currently occupied by a stationary pac
+        # (allowed if the occupant is moving away this turn)
+        for b, tgt in list(intended.items()):
+            if tgt is None:
+                continue
+            # if target is occupied by someone else's current pos
+            occupant = None
+            for other, pos in curr_positions.items():
+                if other == b:
+                    continue
+                if pos == tgt:
+                    occupant = other
+                    break
+            if occupant is not None:
+                # check if occupant is moving away (has an intended different target)
+                occ_intended = intended.get(occupant)
+                # if occupant isn't moving, or occupant intends to remain in the same cell -> block
+                if occ_intended is None:
+                    stderr += f"{b} attempted to move pac into occupied cell {tgt} by {occupant}; did not move\n"
+                    intended[b] = None
+
+        # Commit valid moves
+        for bot_id, tgt in intended.items():
+            if tgt is not None:
+                # find the pid belonging to this bot so we can log pac id if needed
+                pid = None
+                for k,v in self.owner_map.items():
+                    if v == bot_id:
+                        pid = k
+                        break
+                new_positions[bot_id] = tgt
+                stdout += f"{bot_id} moves pac{pid} -> {tgt}\n"
+            else:
+                # if no intended move and nothing was reported yet, keep position (no-op) - some STAY logs were previously produced
+                pass
+
         # commit positions and handle pellet consumption
         for bot_id, pos in new_positions.items():
             self.pacs[bot_id] = pos
