@@ -24,7 +24,7 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
   useEffect(() => {
     if (currentIndex >= 0 && turnRefs.current[currentIndex]) {
       isScrollingProgrammaticallyRef.current = true
-      turnRefs.current[currentIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      turnRefs.current[currentIndex].scrollIntoView({ behavior: 'smooth', block: 'start' })
       // Reset flag after scroll animation completes
       setTimeout(() => {
         isScrollingProgrammaticallyRef.current = false
@@ -184,7 +184,7 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
                         <div className="turn-section">
                           <div className="turn-section-title">Sortie standard :</div>
                           <pre className="turn-pre">
-                            {playerStdout && `[Player] ${playerStdout}\n`}
+                            {playerStdout && `[Player] ${playerStdout}`}
                             {opponentStdout && `[Opponent] ${opponentStdout}`}
                             {!playerStdout && !opponentStdout && '—'}
                           </pre>
@@ -195,7 +195,7 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
                         <div className="turn-section">
                           <div className="turn-section-title">Sortie d'erreur :</div>
                           <pre className="turn-pre">
-                            {playerStderr && `[Player] ${playerStderr}\n`}
+                            {playerStderr && `[Player] ${playerStderr}`}
                             {opponentStderr && `[Opponent] ${opponentStderr}`}
                           </pre>
                         </div>
