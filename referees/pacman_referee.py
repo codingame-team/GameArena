@@ -1,5 +1,67 @@
 """A minimal Pacman-like referee implementing a toy version of the rules from pacman.md.
 This is intentionally simplified for a prototype.
+
+RÈGLES DE DÉPLACEMENT DES PACS
+==============================
+
+1. FORMAT DES COMMANDES
+----------------------
+"MOVE <pac_id> <x> <y>" : Déplacer le pac vers les coordonnées absolues (x,y)
+"STAY" : Le pac reste sur place (pas de mouvement)
+- Les commandes peuvent être séparées par ";" (seule la première commande valide est exécutée)
+
+2. RESTRICTIONS DE DÉPLACEMENT
+----------------------------
+a) PAS DE DIAGONALES
+   ✓ Autorisé : déplacements horizontaux ou verticaux uniquement
+     - (x,y) → (x±1,y)   : un pas à gauche/droite
+     - (x,y) → (x,y±1)   : un pas haut/bas
+   ✗ Interdit : (x,y) → (x±1,y±1)
+
+b) UN SEUL PAS À LA FOIS EST EFFECTUÉ
+   ✓ Autorisé : déplacement d'une case par tour
+   ✓ NOUVEAU : cibler une case éloignée (calcul automatique du plus court chemin)
+   ✗ Interdit : pas de diagonales
+
+c) PAS DE RETOUR À LA MÊME CASE
+   ✗ Interdit : déplacement vers la case actuelle
+
+3. COLLISIONS
+------------
+- Si plusieurs pacs visent la même case au même tour :
+  → AUCUN des pacs impliqués ne se déplace
+  → Ils restent tous sur leur position actuelle
+  → Un message d'erreur est ajouté dans stderr
+
+4. CASES OCCUPÉES
+---------------
+- Un pac ne peut pas se déplacer sur une case occupée par un autre pac
+- EXCEPTION : Si l'occupant doit aussi se déplacer ce tour-ci
+
+5. ORDRE D'EXÉCUTION DU TOUR
+--------------------------
+1. Analyse des commandes et calcul des cibles voulues
+2. Pour les cibles non-adjacentes, calcul du prochain pas via BFS
+3. Détection et annulation des collisions (plusieurs pacs → même case)
+4. Blocage des mouvements vers les cases occupées
+5. Exécution des mouvements valides et consommation des pellets
+
+6. COMMANDES INVALIDES
+--------------------
+- Format invalide → le pac reste sur place
+- Tentative de contrôler le pac adverse → commande ignorée
+- Violation des règles → le pac reste sur place, message d'erreur
+- Aucun chemin vers la cible → le pac reste sur place, message d'erreur
+
+7. CONDITIONS DE FIN DE JEU
+---------------------------
+Le jeu se termine si :
+- Tous les pellets ont été consommés
+- Le nombre maximum de tours est atteint
+- NOUVEAU : Un joueur a une avance insurmontable
+  → Si score_A > score_B + pellets_restants
+  → Le joueur B ne peut plus rattraper même en prenant tous les pellets restants
+  → Le jeu se termine immédiatement avec A comme vainqueur
 """
 from game_sdk import Referee
 from typing import Dict, Any, Tuple
@@ -57,7 +119,7 @@ class PacmanReferee(Referee):
         return {
             'init_inputs': 'width height and the map',
             'turn_inputs': 'for each pac: id x y; for each pellet: x y value',
-            'turn_output': 'MOVE <pac_id> <x> <y> or STAY (absolute coordinates). Multiple commands may be separated by ";".',
+            'turn_output': 'MOVE <pac_id> <x> <y> or STAY (absolute coordinates). Target can be non-adjacent; shortest path will be computed. Multiple commands may be separated by ";".',
             'constraints': {
                 'max_turns': self.max_turns,
                 # Increase per-bot time budget to 200ms by default to account for
@@ -94,7 +156,39 @@ class PacmanReferee(Referee):
         return 'draw'
 
     def is_finished(self):
-        return self.turn >= self.max_turns or len(self.pellets)==0
+        """Vérifie si le jeu est terminé.
+
+        Le jeu se termine si :
+        1. Le nombre maximum de tours est atteint
+        2. Tous les pellets ont été consommés
+        3. Un joueur a une avance insurmontable (nouveau)
+           - Si score_joueur > score_adversaire + pellets_restants
+           - L'adversaire ne peut plus rattraper même en prenant tous les pellets restants
+
+        Returns:
+            bool: True si le jeu est terminé, False sinon
+        """
+        # Conditions classiques de fin
+        if self.turn >= self.max_turns:
+            return True
+        if len(self.pellets) == 0:
+            return True
+
+        # Vérification de victoire anticipée par avance insurmontable
+        player_score = self.scores.get('player', 0)
+        opponent_score = self.scores.get('opponent', 0)
+        remaining_pellets = len(self.pellets)
+
+        # Si le joueur a une avance insurmontable
+        # score_player > score_opponent + tous_les_pellets_restants
+        if player_score > opponent_score + remaining_pellets:
+            return True
+
+        # Si l'adversaire a une avance insurmontable
+        if opponent_score > player_score + remaining_pellets:
+            return True
+
+        return False
 
     def make_bot_input(self, bot_id: str) -> str:
         # CodinGame-like per-turn input:
@@ -126,6 +220,78 @@ class PacmanReferee(Referee):
         pellet_lines = [f"{x} {y} 1" for x, y in pellets]
         pellets_block = f"{visible_pellet_count}\n" + ('\n'.join(pellet_lines) + '\n' if pellet_lines else '')
         return f"{my_score} {opp_score}\n" + pacs_block + pellets_block
+
+    def validate_move(self, current_pos: Tuple[int, int], target_pos: Tuple[int, int]) -> Tuple[bool, Tuple[int, int]]:
+        """Vérifie si un mouvement est valide et calcule le prochain pas sur le plus court chemin.
+
+        Supporte les déplacements vers des cases non-adjacentes en utilisant BFS.
+        Le Pac ne se déplace que d'une case par tour, mais peut cibler n'importe quelle case.
+
+        Règles appliquées :
+        1. Pas de déplacement en diagonale (horizontal OU vertical uniquement)
+        2. Un seul pas à la fois est effectué (mais la cible peut être éloignée)
+        3. Position cible doit être différente de la position actuelle
+        4. Position cible doit être dans les limites de la grille
+        5. Un chemin valide doit exister entre la position actuelle et la cible
+
+        Args:
+            current_pos: Position actuelle (x, y)
+            target_pos: Position cible (x, y)
+
+        Returns:
+            Tuple (valide, prochaine_position):
+            - valide: True si un chemin existe vers la cible
+            - prochaine_position: Position de la prochaine case sur le plus court chemin,
+                                 ou None si pas de chemin valide
+        """
+        if not current_pos or not target_pos:
+            return False, None
+
+        cx, cy = current_pos
+        tx, ty = target_pos
+
+        # Vérification des limites de la grille
+        if not (0 <= tx < self.width and 0 <= ty < self.height):
+            return False, None
+
+        # Pas de déplacement vers la même case
+        if (tx, ty) == (cx, cy):
+            return False, None
+
+        # Si c'est une case adjacente, vérifie que ce n'est pas en diagonale
+        dx = abs(tx - cx)
+        dy = abs(ty - cy)
+
+        if dx + dy == 1:
+            # Case adjacente directement accessible
+            return True, target_pos
+
+        # Pour les cases non-adjacentes, utiliser BFS pour trouver le plus court chemin
+        queue = [(current_pos, [current_pos])]
+        visited = {current_pos}
+
+        while queue:
+            (x, y), path = queue.pop(0)
+
+            # Explorer les 4 directions (haut, droite, bas, gauche)
+            for dir_dx, dir_dy in [(0, -1), (1, 0), (0, 1), (-1, 0)]:
+                next_x, next_y = x + dir_dx, y + dir_dy
+                next_pos = (next_x, next_y)
+
+                # Vérifie si la position est valide et non visitée
+                if (0 <= next_x < self.width and
+                    0 <= next_y < self.height and
+                    next_pos not in visited):
+
+                    if next_pos == target_pos:
+                        # Chemin trouvé! Retourner le premier pas après la position actuelle
+                        return True, path[1] if len(path) > 1 else next_pos
+
+                    visited.add(next_pos)
+                    queue.append((next_pos, path + [next_pos]))
+
+        # Aucun chemin trouvé
+        return False, None
 
     def parse_bot_output(self, bot_id: str, output_str: str) -> str:
         # Accept either:
@@ -189,6 +355,26 @@ class PacmanReferee(Referee):
         return ' ; '.join(normalized_cmds)
 
     def step(self, actions_by_bot: Dict[str,str]) -> Tuple[Dict[str,str], str, str]:
+        """Exécute un tour de jeu en traitant les actions des bots et mettant à jour l'état.
+
+        Application des règles de déplacement (voir docstring du module) :
+        1. Pas de déplacements en diagonale (horizontal OU vertical uniquement)
+        2. Un seul pas à la fois est effectué (calcul automatique pour cibles éloignées)
+        3. Pas de déplacement vers la case actuelle
+        4. Collisions : si plusieurs pacs visent la même case, aucun ne bouge
+        5. Cases occupées : bloquées sauf si l'occupant s'en va
+
+        Args:
+            actions_by_bot: Dictionnaire {bot_id: action_string}
+                bot_id: 'player' ou 'opponent'
+                action_string: commande au format 'MOVE <pac_id> <x> <y>' ou 'STAY'
+
+        Returns:
+            Tuple (dict_état, stdout, stderr) où :
+            - dict_état: État du jeu après exécution du tour
+            - stdout: Messages de déplacement et consommation de pellets
+            - stderr: Messages d'erreur (mouvements invalides, collisions)
+        """
         stdout = ''
         stderr = ''
         # Apply actions: accept commands like 'MOVE <pac_id> <x> <y>' (possibly multiple separated by ';') or 'STAY'
@@ -226,19 +412,17 @@ class PacmanReferee(Referee):
                             # command targets a pac id that doesn't belong to this bot -> ignore
                             stderr += f"{bot_id} attempted to control pac {pid} which is owned by {owner}\n"
                             continue
-                        # compute clamped target
-                        nx = max(0, min(self.width-1, tx))
-                        ny = max(0, min(self.height-1, ty))
-                        # if target equals current position -> invalid (no-op)
                         current_pos = curr_positions.get(bot_id)
-                        if (nx, ny) == current_pos:
-                            stderr += f"{bot_id} attempted MOVE to its current cell {current_pos}; did not move\n"
+
+                        # Valider le mouvement et calculer le prochain pas
+                        is_valid, next_step = self.validate_move(current_pos, (tx, ty))
+                        if not is_valid:
+                            stderr += f"{bot_id} attempted invalid move from {current_pos} to ({tx}, {ty}) - no path exists\n"
                             intended[bot_id] = None
-                            # stop processing further subcommands for this bot
                             break
-                        # record the intended move for now
-                        intended[bot_id] = (nx, ny)
-                        # only consider the first valid MOVE for this bot in this turn
+
+                        # next_step contient maintenant la prochaine position sur le chemin
+                        intended[bot_id] = next_step
                         break
                     else:
                         stderr += f"{bot_id} bad MOVE format: {sub}\n"
