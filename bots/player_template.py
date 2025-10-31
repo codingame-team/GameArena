@@ -52,11 +52,8 @@ while True:
         # nearest pellet by Manhattan distance
         def mdist(a, b):
             return abs(a[0] - b[0]) + abs(a[1] - b[1])
-        nearest = min(pellets, key=lambda t: mdist((px, py), (t[0], t[1])))
-        dx = 0 if nearest[0] == px else (1 if nearest[0] > px else -1)
-        dy = 0 if nearest[1] == py else (1 if nearest[1] > py else -1)
-        tx = px + dx
-        ty = py + dy
+        p = min(pellets, key=lambda t: mdist((px, py), (t[0], t[1])))
+        tx, ty = p[0], p[1] if p else px, py
         # preferred format: include pac id
         print(f"MOVE {pac_id} {tx} {ty}", flush=True)
     else:
