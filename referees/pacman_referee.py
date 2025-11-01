@@ -7,8 +7,8 @@ RÈGLES DE DÉPLACEMENT DES PACS
 1. FORMAT DES COMMANDES
 ----------------------
 "MOVE <pac_id> <x> <y>" : Déplacer le pac vers les coordonnées absolues (x,y)
-"STAY" : Le pac reste sur place (pas de mouvement)
 - Les commandes peuvent être séparées par ";" (seule la première commande valide est exécutée)
+- Note: "STAY" n'est PLUS autorisé. Utilisez "MOVE <x> <y>" vers votre position actuelle pour rester sur place.
 
 2. RESTRICTIONS DE DÉPLACEMENT
 ----------------------------
@@ -23,8 +23,8 @@ b) UN SEUL PAS À LA FOIS EST EFFECTUÉ
    ✓ NOUVEAU : cibler une case éloignée (calcul automatique du plus court chemin)
    ✗ Interdit : pas de diagonales
 
-c) PAS DE RETOUR À LA MÊME CASE
-   ✗ Interdit : déplacement vers la case actuelle
+c) DÉPLACEMENT VERS LA POSITION COURANTE
+   ✓ Autorisé : "MOVE <x> <y>" vers votre position actuelle (le pac reste sur place)
 
 3. COLLISIONS
 ------------
@@ -58,10 +58,18 @@ c) PAS DE RETOUR À LA MÊME CASE
 Le jeu se termine si :
 - Tous les pellets ont été consommés
 - Le nombre maximum de tours est atteint
-- NOUVEAU : Un joueur a une avance insurmontable
+- Un joueur a une avance insurmontable
   → Si score_A > score_B + pellets_restants
   → Le joueur B ne peut plus rattraper même en prenant tous les pellets restants
   → Le jeu se termine immédiatement avec A comme vainqueur
+
+8. CONDITIONS DE DÉFAITE
+-----------------------
+Votre programme perd immédiatement si :
+- Il n'a pas répondu dans le temps imparti (timeout)
+- Une commande est invalide ou malformée
+→ La partie se termine immédiatement avec une défaite pour le joueur fautif
+→ L'adversaire remporte automatiquement la victoire
 """
 from game_sdk import Referee
 from typing import Dict, Any, Tuple
@@ -79,6 +87,8 @@ class PacmanReferee(Referee):
         self.max_turns = 200
         # owner_map: pac_id -> owner ('player'|'opponent')
         self.owner_map = {}
+        # Track if a bot has failed (timeout or invalid command causing disqualification)
+        self.bot_failed = None  # Will be set to 'player' or 'opponent' if they fail
 
     def init_game(self, init_params: Dict[str,Any]):
         # init_params may contain width/height or custom map
@@ -119,7 +129,7 @@ class PacmanReferee(Referee):
         return {
             'init_inputs': 'width height and the map',
             'turn_inputs': 'for each pac: id x y; for each pellet: x y value',
-            'turn_output': 'MOVE <pac_id> <x> <y> or STAY (absolute coordinates). Target can be non-adjacent; shortest path will be computed. Multiple commands may be separated by ";".',
+            'turn_output': 'MOVE <pac_id> <x> <y> (absolute coordinates). STAY is NOT allowed - use MOVE to current position to stay in place. Target can be non-adjacent; shortest path will be computed. Multiple commands may be separated by ";".',
             'constraints': {
                 'max_turns': self.max_turns,
                 # Increase per-bot time budget to 200ms by default to account for
@@ -138,6 +148,12 @@ class PacmanReferee(Referee):
         # If the game is finished, include the winner information
         if self.is_finished():
             state['winner'] = self.get_winner()
+            # Add formatted message if a bot failed (timeout or invalid command)
+            if self.bot_failed:
+                winner = self.get_winner()
+                winner_score = self.scores.get(winner, 0)
+                loser = 'opponent' if winner == 'player' else 'player'
+                state['final_message'] = f"1st {winner} {winner_score}\n2nd {loser} 0 (time out)"
         else:
             state['winner'] = None
         return state
@@ -164,10 +180,16 @@ class PacmanReferee(Referee):
         3. Un joueur a une avance insurmontable (nouveau)
            - Si score_joueur > score_adversaire + pellets_restants
            - L'adversaire ne peut plus rattraper même en prenant tous les pellets restants
+        4. Un joueur a échoué (timeout ou commande invalide répétée)
+           - Défaite immédiate pour le joueur fautif
 
         Returns:
             bool: True si le jeu est terminé, False sinon
         """
+        # Condition de défaite : Un bot a échoué (timeout ou commande invalide)
+        if self.bot_failed is not None:
+            return True
+        
         # Conditions classiques de fin
         if self.turn >= self.max_turns:
             return True
@@ -295,13 +317,13 @@ class PacmanReferee(Referee):
 
     def parse_bot_output(self, bot_id: str, output_str: str) -> str:
         # Accept either:
-        #  - "STAY"
         #  - legacy: "MOVE x y"
         #  - new: "MOVE pac_id x y"
         # multiple commands may be separated by ';'
+        # Note: STAY is NOT allowed - bot must output a MOVE command
         s = (output_str or '').strip()
         if not s:
-            return 'STAY'
+            return ''  # No output = invalid
         # take first non-empty line
         first_line = ''
         for ln in s.splitlines():
@@ -309,7 +331,7 @@ class PacmanReferee(Referee):
                 first_line = ln.strip()
                 break
         if not first_line:
-            return 'STAY'
+            return ''  # No valid line = invalid
         parts_line = [c.strip() for c in first_line.split(';') if c.strip()]
         normalized_cmds = []
         for cmd in parts_line:
@@ -317,9 +339,9 @@ class PacmanReferee(Referee):
             if len(parts) == 0:
                 continue
             cmd0 = parts[0].upper()
-            if cmd0 == 'STAY' and len(parts) == 1:
-                normalized_cmds.append('STAY')
-                continue
+            # STAY is not allowed anymore
+            if cmd0 == 'STAY':
+                continue  # Skip STAY commands
             if cmd0 == 'MOVE':
                 # New form: MOVE pac_id x y  (len >=4)
                 if len(parts) >= 4:
@@ -351,7 +373,7 @@ class PacmanReferee(Referee):
             # unknown/invalid subcommand -> ignore
             continue
         if not normalized_cmds:
-            return 'STAY'
+            return ''  # No valid commands = invalid (will trigger error)
         return ' ; '.join(normalized_cmds)
 
     def step(self, actions_by_bot: Dict[str,str]) -> Tuple[Dict[str,str], str, str]:
@@ -360,14 +382,15 @@ class PacmanReferee(Referee):
         Application des règles de déplacement (voir docstring du module) :
         1. Pas de déplacements en diagonale (horizontal OU vertical uniquement)
         2. Un seul pas à la fois est effectué (calcul automatique pour cibles éloignées)
-        3. Pas de déplacement vers la case actuelle
+        3. MOVE vers la position courante est autorisé (le pac reste sur place)
         4. Collisions : si plusieurs pacs visent la même case, aucun ne bouge
         5. Cases occupées : bloquées sauf si l'occupant s'en va
 
         Args:
             actions_by_bot: Dictionnaire {bot_id: action_string}
                 bot_id: 'player' ou 'opponent'
-                action_string: commande au format 'MOVE <pac_id> <x> <y>' ou 'STAY'
+                action_string: commande au format 'MOVE <pac_id> <x> <y>'
+                Note: STAY n'est plus accepté, utilisez MOVE vers position courante
 
         Returns:
             Tuple (dict_état, stdout, stderr) où :
@@ -377,7 +400,7 @@ class PacmanReferee(Referee):
         """
         stdout = ''
         stderr = ''
-        # Apply actions: accept commands like 'MOVE <pac_id> <x> <y>' (possibly multiple separated by ';') or 'STAY'
+        # Apply actions: accept commands like 'MOVE <pac_id> <x> <y>' (possibly multiple separated by ';')
         # We'll first compute intended targets for each bot, then resolve collisions/conflicts before committing.
         new_positions = {}
         # Start from current positions
@@ -426,12 +449,9 @@ class PacmanReferee(Referee):
                         break
                     else:
                         stderr += f"{bot_id} bad MOVE format: {sub}\n"
-                elif parts[0].upper() == 'STAY':
-                    # explicit no-op
-                    intended[bot_id] = None
-                    break
                 else:
-                    stderr += f"{bot_id} unknown command: {sub}\n"
+                    # STAY and all other commands are not allowed
+                    stderr += f"{bot_id} invalid command: {sub} (only MOVE is allowed)\n"
 
         # Second pass: detect collisions where multiple bots intend the same target
         # Build mapping target -> list of bots intending it
@@ -522,13 +542,14 @@ class PacmanReferee(Referee):
         game state and indicate which bot timed out. This avoids crashing the
         HTTP handler while ensuring a bot error causes an immediate loss.
         """
-        # Determine the other side
-        other = 'opponent' if bot_id == 'player' else 'player'
-        # Award a decisive point to the other side so get_winner favors them
+        # Mark the bot as failed for immediate game end
+        self.bot_failed = bot_id
+        
+        # Set the failed bot's score to 0
         try:
-            self.scores[other] = self.scores.get(other, 0) + 1
+            self.scores[bot_id] = 0
         except Exception:
-            self.scores = {other: 1}
+            self.scores = {bot_id: 0}
         # Fast-forward to finished state
         self.turn = self.max_turns
         # Record in history for transparency

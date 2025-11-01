@@ -12,6 +12,10 @@ import pathlib
 from game_sdk import Referee, make_bot_runner, BotRunner
 from runner.docker_runner import get_last_run_debug, set_console_tracing, is_console_tracing_enabled
 from flask_cors import CORS
+from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
+from models import db, User, Bot, Match
+from auth import register_user, login_user, get_current_user
+from arena import ArenaManager
 import uuid
 import subprocess
 import logging
@@ -19,7 +23,7 @@ import errno
 import json
 import re
 import traceback
-import datetime
+import datetime as dt
 
 # Configure basic logging so INFO logs appear in the Flask console by default
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -29,7 +33,40 @@ logging.getLogger('werkzeug').setLevel(logging.INFO)
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 # Ensure app logger level
 app.logger.setLevel(logging.INFO)
-CORS(app)
+
+# Configuration
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
+app.config['JWT_TOKEN_LOCATION'] = ['headers']
+app.config['JWT_HEADER_NAME'] = 'Authorization'
+app.config['JWT_HEADER_TYPE'] = 'Bearer'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///gamearena.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize extensions
+CORS(app, supports_credentials=True, origins='*')
+db.init_app(app)
+jwt = JWTManager(app)
+
+# JWT error handlers
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    return jsonify({'error': 'Invalid token', 'message': str(error)}), 422
+
+@jwt.unauthorized_loader
+def missing_token_callback(error):
+    return jsonify({'error': 'Authorization required', 'message': str(error)}), 401
+
+@jwt.expired_token_loader
+def expired_token_callback(jwt_header, jwt_payload):
+    return jsonify({'error': 'Token has expired'}), 401
+
+# Initialize arena manager
+arena_manager = ArenaManager(referee_type='pacman')
+
+# Create tables
+with app.app_context():
+    db.create_all()
 
 # Directory where edited player bots are persisted so they can be mounted into Docker
 PERSISTENT_BOTS_DIR = os.environ.get('PERSISTENT_BOTS_DIR', 'persistent_bots')
@@ -84,15 +121,15 @@ def restore_game_from_index(game_id: str):
         'id': game_id,
         'ref': ref,
         'player_code': None,
-        'player_bot_path': meta.get('player_bot_path'),
-        'opponent': meta.get('opponent', 'default_opponent_cli'),
+        'player_bot_id': meta.get('player_bot_id'),
+        'opponent': meta.get('opponent', 'Boss'),
         'bot_runner': meta.get('bot_runner'),
         'history': ref.history
     }
     GAMES[game_id] = game_entry
     # Log restore so operator sees which opponent is associated
     try:
-        logging.getLogger(__name__).info('restored game %s from index, opponent=%s, player_bot_path=%s', game_id, game_entry.get('opponent'), bool(game_entry.get('player_bot_path')))
+        logging.getLogger(__name__).info('restored game %s from index, opponent=%s, player_bot_id=%s', game_id, game_entry.get('opponent'), game_entry.get('player_bot_id'))
     except Exception:
         pass
     return game_entry
@@ -114,18 +151,19 @@ def run_bot_python(bot_code: str, input_str: str, timeout_ms: int = 50):
 
 
 # Validate action text
-ACTION_RE = re.compile(r'^(STAY|MOVE\s+-?\d+\s+-?\d+(?:\s+-?\d+)?)$', re.IGNORECASE)
+ACTION_RE = re.compile(r'^(MOVE\s+-?\d+\s+-?\d+(?:\s+-?\d+)?)$', re.IGNORECASE)
 
 def validate_action_format(raw_output: str, normalized_action: str):
-    if not raw_output:
-        return normalized_action, ''
+    # Check if bot produced no output
+    if not raw_output or not raw_output.strip():
+        return normalized_action, 'no output from bot'
     first_line = ''
     for ln in raw_output.splitlines():
         if ln and ln.strip():
             first_line = ln.strip()
             break
     if not first_line:
-        return normalized_action, ''
+        return normalized_action, 'no valid output from bot'
     if ACTION_RE.match(first_line):
         return normalized_action, ''
     return normalized_action, f'invalid action format: "{first_line}"'
@@ -135,34 +173,90 @@ def validate_action_format(raw_output: str, normalized_action: str):
 def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, initial_map_block: str, timeout_ms: int, memory_mb: int, cpus: float):
     bot_code = None
     bot_path = None
+    is_arena_match = game.get('is_arena_match', False)
+    
     if role == 'player':
-        bot_path = game.get('player_bot_path')
-        if bot_path and os.path.exists(bot_path):
-            try:
-                with open(bot_path, 'r', encoding='utf-8') as f:
-                    bot_code = f.read()
-            except Exception:
-                bot_code = None
+        # Check if player is specified by bot ID (Arena match)
+        player_bot_id = game.get('player_bot_id')
+        if player_bot_id:
+            from models import Bot
+            bot = Bot.query.get(player_bot_id)
+            if bot:
+                if is_arena_match and bot.latest_version_number > 0:
+                    # Use Arena version for player
+                    active_version = bot.get_active_version()
+                    if active_version:
+                        bot_code = active_version.code
+                        bot_path = f'db:bot:{player_bot_id}:v{active_version.version_number}'
+                        logging.getLogger(__name__).info('Using player bot from Arena: id=%s, name=%s, version=%s', 
+                                                        player_bot_id, bot.name, active_version.version_name)
+                    else:
+                        bot_code = bot.code
+                        bot_path = f'db:bot:{player_bot_id}'
+                        logging.getLogger(__name__).warning('Player bot %s has no Arena version, using draft code', player_bot_id)
+                else:
+                    # Use current working draft (Playground)
+                    bot_code = bot.code
+                    bot_path = f'db:bot:{player_bot_id}:draft'
+                    logging.getLogger(__name__).info('Using player bot draft from Playground: id=%s, name=%s', player_bot_id, bot.name)
+        
+        # Fallback to legacy player_bot_path or player_code
         if not bot_code:
-            bot_code = game.get('player_code')
-    else:
-        opp_setting = game.get('opponent')
-        if opp_setting and os.path.exists(opp_setting):
-            bot_path = opp_setting
-            try:
-                with open(bot_path, 'r', encoding='utf-8') as f:
-                    bot_code = f.read()
-            except Exception:
-                bot_code = None
-        else:
-            default_opp = os.path.join('bots', 'default_opponent_cli.py')
-            if os.path.exists(default_opp):
-                bot_path = default_opp
+            bot_path = game.get('player_bot_path')
+            if bot_path and os.path.exists(bot_path):
                 try:
                     with open(bot_path, 'r', encoding='utf-8') as f:
                         bot_code = f.read()
                 except Exception:
                     bot_code = None
+        if not bot_code:
+            bot_code = game.get('player_code')
+    else:
+        opp_setting = game.get('opponent')
+        # Check if opponent is a bot ID (integer or string digit)
+        try:
+            bot_id = int(opp_setting)
+            from models import Bot
+            bot = Bot.query.get(bot_id)
+            if bot:
+                # For Arena matches, use the latest submitted version
+                # For Playground testing, use current working code
+                if is_arena_match and bot.latest_version_number > 0:
+                    # Use Arena version
+                    active_version = bot.get_active_version()
+                    if active_version:
+                        bot_code = active_version.code
+                        bot_path = f'db:bot:{bot_id}:v{active_version.version_number}'
+                        logging.getLogger(__name__).info('Using bot from Arena: id=%s, name=%s, version=%s', 
+                                                        bot_id, bot.name, active_version.version_name)
+                    else:
+                        bot_code = bot.code
+                        bot_path = f'db:bot:{bot_id}'
+                        logging.getLogger(__name__).warning('Bot %s has no Arena version, using draft code', bot_id)
+                else:
+                    # Use current working draft (Playground)
+                    bot_code = bot.code
+                    bot_path = f'db:bot:{bot_id}:draft'
+                    logging.getLogger(__name__).info('Using bot draft from Playground: id=%s, name=%s', bot_id, bot.name)
+        except (ValueError, TypeError):
+            # Not a bot ID, check if it's a file path
+            if opp_setting and os.path.exists(opp_setting):
+                bot_path = opp_setting
+                try:
+                    with open(bot_path, 'r', encoding='utf-8') as f:
+                        bot_code = f.read()
+                except Exception:
+                    bot_code = None
+            else:
+                # Default opponent (Boss)
+                default_opp = os.path.join('bots', 'Boss.py')
+                if os.path.exists(default_opp):
+                    bot_path = default_opp
+                    try:
+                        with open(bot_path, 'r', encoding='utf-8') as f:
+                            bot_code = f.read()
+                    except Exception:
+                        bot_code = None
 
     if not bot_code:
         try:
@@ -186,14 +280,19 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
                 from game_sdk import parse_bot_code, run_parsed_init, run_parsed_turn
                 parsed = parse_bot_code(bot_code)
                 # Run init once using the initial_map_block
+                logging.getLogger(__name__).debug('game %s role=%s: running parsed init with map block length=%d', game.get('id'), role, len(initial_map_block or ''))
                 out_init, err_init, rc_init = run_parsed_init(parsed, initial_map_block or '', timeout_ms=max(2000, timeout_ms))
-                # store parsed object and its init outputs for subsequent turns
-                parsed_store[role] = {'parsed': parsed, 'init_stdout': out_init or '', 'init_stderr': err_init or ''}
-                parsed_entry = parsed_store[role]
-                # If init raised exception (rc_init != 0), record stderr but continue to attempt turns
-                init_stdout = parsed_entry.get('init_stdout', '')
-                init_stderr = parsed_entry.get('init_stderr', '')
-            except Exception:
+                # Check if init succeeded
+                if rc_init != 0:
+                    logging.getLogger(__name__).warning('game %s role=%s: parsed init failed (rc=%d, stderr=%s)', game.get('id'), role, rc_init, err_init)
+                    parsed_entry = None
+                else:
+                    # store parsed object and its init outputs for subsequent turns
+                    parsed_store[role] = {'parsed': parsed, 'init_stdout': out_init or '', 'init_stderr': err_init or ''}
+                    parsed_entry = parsed_store[role]
+                    logging.getLogger(__name__).debug('game %s role=%s: parsed init succeeded', game.get('id'), role)
+            except Exception as e:
+                logging.getLogger(__name__).exception('game %s role=%s: exception during parsed init', game.get('id'), role)
                 parsed_entry = None
         # If we have a parsed entry with turn code, run it for this turn
         if parsed_entry:
@@ -211,6 +310,14 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
                     return 'STAY', {'stdout': out or '', 'stderr': err or 'timeout', 'rc': rc, 'runner': runner_used, 'parsed': True, 'path': bot_path}
                 action = ref.parse_bot_output(role, out)
                 action, fmt_err = validate_action_format(out, action)
+                # Treat invalid actions as fatal errors
+                if fmt_err:
+                    try:
+                        ref.on_bot_timeout(role, ref.turn, fmt_err)
+                    except Exception:
+                        pass
+                    logging.getLogger(__name__).warning('game %s role=%s: invalid action detected (path=%s) error=%s', game.get('id'), role, bot_path, fmt_err)
+                    return 'STAY', {'stdout': out or '', 'stderr': fmt_err, 'rc': -1, 'runner': runner_used, 'parsed': True, 'path': bot_path}
                 stderr_field = (err or '') + (('; ' + fmt_err) if fmt_err else '')
                 # include init stderr if present (helps debug init failures)
                 if isinstance(parsed_entry, dict):
@@ -240,6 +347,14 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
             return 'STAY', {'stdout': out or '', 'stderr': err or 'timeout', 'rc': rc, 'runner': runner_used, 'path': bot_path}
         action = ref.parse_bot_output(role, out)
         action, fmt_err = validate_action_format(out, action)
+        # Treat invalid actions as fatal errors
+        if fmt_err:
+            try:
+                ref.on_bot_timeout(role, ref.turn, fmt_err)
+            except Exception:
+                pass
+            logging.getLogger(__name__).warning('game %s role=%s: invalid action detected (path=%s) error=%s', game.get('id'), role, bot_path, fmt_err)
+            return 'STAY', {'stdout': out or '', 'stderr': fmt_err, 'rc': -1, 'runner': runner_used, 'path': bot_path}
         stderr_field = (err or '') + (('; ' + fmt_err) if fmt_err else '')
         logging.getLogger(__name__).info('game %s role=%s: executed runner bot (path=%s) runner=%s', game.get('id'), role, bot_path, runner_used)
         return action, {'stdout': out, 'stderr': stderr_field, 'rc': rc, 'runner': runner_used, 'path': bot_path}
@@ -268,7 +383,7 @@ def index():
         browser = 'Firefox'
     elif 'Safari' in ua_string:
         browser = 'Safari'
-    date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     logging.getLogger(__name__).info('Client connected: IP=%s, OS=%s, Browser=%s, Date=%s', ip, os, browser, date)
     return send_from_directory('static', 'index.html')
 
@@ -291,7 +406,7 @@ def list_referees():
         browser = 'Firefox'
     elif 'Safari' in ua_string:
         browser = 'Safari'
-    date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     logging.getLogger(__name__).info('Client connected: IP=%s, OS=%s, Browser=%s, Date=%s', ip, os, browser, date)
     data = {}
     for name, maker in REFEREES.items():
@@ -300,6 +415,7 @@ def list_referees():
     return jsonify(data)
 
 
+@app.route('/api/template')
 @app.route('/api/player/template')
 def get_player_template():
     try:
@@ -311,37 +427,7 @@ def get_player_template():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/player/code/<bot_id>', methods=['GET', 'POST'])
-def player_code(bot_id):
-    bot_dir = os.path.join(PERSISTENT_BOTS_DIR, bot_id)
-    bot_path = os.path.join(bot_dir, 'bot.py')
-    if request.method == 'GET':
-        if not os.path.exists(bot_path):
-            return jsonify({'exists': False}), 404
-        try:
-            with open(bot_path, 'r', encoding='utf-8') as f:
-                return jsonify({'exists': True, 'code': f.read()})
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
-    else:
-        body = request.json or {}
-        code = body.get('code')
-        if code is None:
-            return jsonify({'error': 'missing code'}), 400
-        try:
-            pathlib.Path(bot_dir).mkdir(parents=True, exist_ok=True)
-            with open(bot_path, 'w', encoding='utf-8') as f:
-                f.write(code)
-            affected = []
-            for gid, g in list(GAMES.items()):
-                try:
-                    if g.get('player_bot_path') == bot_path:
-                        affected.append({'game_id': gid, 'action': 'updated_path'})
-                except Exception:
-                    logging.getLogger(__name__).exception('error while checking games for saved bot %s', bot_id)
-            return jsonify({'saved': True, 'path': bot_path, 'affected_games': affected})
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+# Old /api/player/code endpoint removed - bot code now stored in database only
 
 
 @app.route('/api/games', methods=['POST'])
@@ -349,7 +435,7 @@ def create_game():
     body = request.json or {}
     referee_name = body.get('referee', 'pacman')
     player_code = body.get('player_code', None)
-    opponent = body.get('opponent', 'default_opponent_cli')
+    opponent = body.get('opponent', 'Boss')
     bot_runner = body.get('bot_runner')
     maker = REFEREES.get(referee_name)
     if not maker:
@@ -361,39 +447,30 @@ def create_game():
         'id': game_id,
         'ref': ref,
         'player_code': None,
-        'player_bot_path': None,
+        'player_bot_id': None,
         'opponent': opponent,
         'bot_runner': bot_runner,
         'history': []
     }
+    # Store bot ID and code directly in game_entry (no file persistence)
     player_bot_id = body.get('player_bot_id')
     if player_bot_id:
-        candidate = os.path.join(PERSISTENT_BOTS_DIR, player_bot_id, 'bot.py')
-        if os.path.exists(candidate):
-            game_entry['player_bot_path'] = candidate
-
+        game_entry['player_bot_id'] = player_bot_id
+    
     if player_code:
-        bot_dir = os.path.join(PERSISTENT_BOTS_DIR, game_id)
-        pathlib.Path(bot_dir).mkdir(parents=True, exist_ok=True)
-        bot_path = os.path.join(bot_dir, 'bot.py')
-        try:
-            with open(bot_path, 'w', encoding='utf-8') as f:
-                f.write(player_code)
-            game_entry['player_bot_path'] = bot_path
-        except Exception:
-            game_entry['player_code'] = player_code
+        game_entry['player_code'] = player_code
 
     game_entry['history'] = ref.history
 
     save_games_index_entry(game_id, {
-        'player_bot_path': game_entry.get('player_bot_path'),
+        'player_bot_id': game_entry.get('player_bot_id'),
         'opponent': game_entry.get('opponent'),
         'bot_runner': game_entry.get('bot_runner'),
         'referee': referee_name
     })
     GAMES[game_id] = game_entry
     # Log created game with opponent name so it's visible in Flask console
-    logging.getLogger(__name__).info('created game %s, opponent=%s, player_bot_path=%s', game_id, game_entry.get('opponent'), bool(game_entry.get('player_bot_path')))
+    logging.getLogger(__name__).info('created game %s, opponent=%s, player_bot_id=%s', game_id, game_entry.get('opponent'), game_entry.get('player_bot_id'))
     return jsonify({'game_id': game_id})
 
 
@@ -406,7 +483,7 @@ def get_game_info(game_id):
         return jsonify({'error': 'not found'}), 404
     info = {
         'id': g.get('id'),
-        'player_bot_path': g.get('player_bot_path') is not None,
+        'player_bot_id': g.get('player_bot_id'),
         'opponent': g.get('opponent')
     }
     return jsonify({'game': info})
@@ -633,6 +710,600 @@ def _handle_unexpected_error(e):
     except Exception:
         pass
     return jsonify({'error': str(e)}), 500
+
+
+# ==================== AUTHENTICATION ENDPOINTS ====================
+
+@app.route('/api/auth/register', methods=['POST'])
+def api_register():
+    """Register a new user."""
+    data = request.get_json()
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    
+    user_dict, error = register_user(username, email, password)
+    if error:
+        return jsonify({'error': error}), 400
+    
+    return jsonify({'user': user_dict, 'message': 'User registered successfully'}), 201
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_login():
+    """Login and get JWT tokens."""
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    
+    result, error = login_user(username, password)
+    if error:
+        return jsonify({'error': error}), 401
+    
+    return jsonify(result), 200
+
+
+@app.route('/api/auth/debug', methods=['GET'])
+def api_debug_auth():
+    """Debug endpoint to check authentication headers."""
+    headers = dict(request.headers)
+    auth_header = request.headers.get('Authorization', 'NOT_FOUND')
+    return jsonify({
+        'authorization_header': auth_header,
+        'all_headers': headers
+    }), 200
+
+
+@app.route('/api/auth/me', methods=['GET'])
+@jwt_required()
+def api_get_current_user():
+    """Get current user info from JWT token."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify({'user': user.to_dict()}), 200
+
+
+# ==================== BOT/ARENA ENDPOINTS ====================
+
+@app.route('/api/bots', methods=['GET'])
+@jwt_required(optional=True)
+def api_get_bots():
+    """Get bots - if authenticated, return user's bots; if 'all' param, return all active bots."""
+    # Check if requesting all bots (for opponent selection)
+    get_all = request.args.get('all', 'false').lower() == 'true'
+    
+    if get_all:
+        # Return all active bots from all users for opponent selection
+        bots = arena_manager.get_all_active_bots()
+        return jsonify({'bots': bots}), 200
+    
+    # Return user's own bots (requires authentication)
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'Authentication required'}), 401
+    
+    bots = arena_manager.get_user_bots(user.id)
+    return jsonify({'bots': bots}), 200
+
+
+@app.route('/api/bots/my', methods=['GET'])
+@jwt_required()
+def api_get_my_bots():
+    """Get all bots owned by current user (including drafts and inactive)."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Return ALL user bots (including inactive ones for Playground)
+    bots = Bot.query.filter_by(user_id=user.id).all()
+    return jsonify([{
+        'id': b.id,
+        'name': b.name,
+        'code': b.code,
+        'latest_version_number': b.latest_version_number,
+        'elo': b.elo_rating,
+        'created_at': b.created_at.isoformat() if b.created_at else None
+    } for b in bots]), 200
+
+
+@app.route('/api/bots', methods=['POST'])
+@jwt_required()
+def api_create_bot():
+    """Create a new bot (Playground)."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    name = data.get('name')
+    code = data.get('code', '')
+    
+    bot_dict, error = arena_manager.create_bot(user.id, name, code)
+    if error:
+        return jsonify({'error': error}), 400
+    
+    return jsonify({'bot': bot_dict, 'message': 'Bot created successfully'}), 201
+
+
+@app.route('/api/bots/<int:bot_id>/save', methods=['PUT'])
+@jwt_required()
+def api_save_bot_code(bot_id):
+    """Save bot code (Playground only - does NOT create version)."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    code = data.get('code')
+    
+    if not code:
+        return jsonify({'error': 'Code is required'}), 400
+    
+    bot_dict, error = arena_manager.save_bot_code(user.id, bot_id, code)
+    if error:
+        return jsonify({'error': error}), 400
+    
+    return jsonify({'bot': bot_dict, 'message': 'Bot code saved'}), 200
+
+
+def _execute_arena_match(game_id, player_bot_id, opponent_bot_id):
+    """Execute a complete arena match and update ELO ratings.
+    
+    Args:
+        game_id: Unique game ID
+        player_bot_id: ID of the first bot
+        opponent_bot_id: ID of the second bot
+    
+    Returns:
+        dict: Match result with winner, scores, and turns
+    """
+    try:
+        # Create game entry
+        maker = REFEREES.get('pacman')
+        if not maker:
+            return {'error': 'Referee not found'}
+        
+        ref = maker()
+        ref.init_game({})
+        
+        # Get initial map from referee (use referee attributes directly)
+        width = getattr(ref, 'width', 0)
+        height = getattr(ref, 'height', 0)
+        # Generate simple map rows (grid is initialized by init_game)
+        grid = getattr(ref, 'grid', [])
+        if grid and width > 0 and height > 0:
+            rows = [''.join(row) for row in grid]
+            initial_map_block = f"{width} {height}\n" + '\n'.join(rows) + '\n'
+        else:
+            initial_map_block = ''
+        
+        game_entry = {
+            'id': game_id,
+            'ref': ref,
+            'player_bot_id': player_bot_id,
+            'opponent': str(opponent_bot_id),
+            'is_arena_match': True,  # Use Arena versions
+            'bot_runner': 'auto',
+            'initial_map_block': initial_map_block,
+            'history': ref.history
+        }
+        
+        GAMES[game_id] = game_entry
+        
+        # Run game until completion
+        max_turns = 200
+        turn_count = 0
+        
+        while not ref.is_finished() and turn_count < max_turns:
+            try:
+                # Execute one turn
+                _execute_game_turn(game_entry, ref)
+                turn_count += 1
+            except Exception as e:
+                logging.getLogger(__name__).exception(f"Error in arena match turn {turn_count}")
+                break
+        
+        # Determine winner
+        state = ref.get_state()
+        scores = state.get('scores', {})
+        player_score = scores.get('player', 0)
+        opponent_score = scores.get('opponent', 0)
+        
+        if player_score > opponent_score:
+            winner = 'player'
+        elif opponent_score > player_score:
+            winner = 'opponent'
+        else:
+            winner = 'draw'
+        
+        # Update match in database
+        match = Match.query.filter_by(game_id=game_id).first()
+        if match:
+            arena_manager.complete_match(
+                match.id,
+                winner=winner,
+                player_score=player_score,
+                opponent_score=opponent_score,
+                turns=turn_count
+            )
+        
+        return {
+            'winner': winner,
+            'player_score': player_score,
+            'opponent_score': opponent_score,
+            'turns': turn_count
+        }
+    except Exception as e:
+        logging.getLogger(__name__).exception(f"Error executing arena match {game_id}")
+        return {'error': str(e)}
+
+
+def _execute_game_turn(game_entry, ref):
+    """Execute a single turn of the game (extracted from step_game endpoint)."""
+    timeout_ms = ref.get_protocol().get('constraints', {}).get('time_ms', 50)
+    memory_mb = ref.get_protocol().get('constraints', {}).get('memory_mb', 64)
+    cpus = ref.get_protocol().get('constraints', {}).get('cpus', 0.5)
+    
+    initial_map_block = game_entry.get('initial_map_block') or ''
+    
+    # Log turn number and state before actions
+    state_before = ref.get_state()
+    turn_num = state_before.get('turn', 0)
+    scores_before = state_before.get('scores', {})
+    pellets_before = state_before.get('pellets', [])
+    logging.getLogger(__name__).info(f"Turn {turn_num}: scores={scores_before}, pellets_count={len(pellets_before)}")
+    
+    # Run player bot
+    player_input = ref.make_bot_input('player')
+    player_action, player_meta = _run_bot_for_role(
+        game_entry, ref, 'player', player_input, initial_map_block,
+        timeout_ms, memory_mb, cpus
+    )
+    
+    # Run opponent bot  
+    opp_input = ref.make_bot_input('opponent')
+    opp_action, opp_meta = _run_bot_for_role(
+        game_entry, ref, 'opponent', opp_input, initial_map_block,
+        timeout_ms, memory_mb, cpus
+    )
+    
+    # Log actions received
+    logging.getLogger(__name__).info(f"Turn {turn_num}: player_action='{player_action}', opponent_action='{opp_action}'")
+    
+    # Apply actions (step expects a dict)
+    actions_by_bot = {
+        'player': player_action,
+        'opponent': opp_action
+    }
+    ref.step(actions_by_bot)
+    
+    # Log state after step
+    state_after = ref.get_state()
+    scores_after = state_after.get('scores', {})
+    pellets_after = state_after.get('pellets', [])
+    logging.getLogger(__name__).info(f"Turn {turn_num}: after step: scores={scores_after}, pellets_count={len(pellets_after)}")
+
+
+@app.route('/api/bots/<int:bot_id>/submit-to-arena', methods=['POST'])
+@jwt_required()
+def api_submit_bot_to_arena(bot_id):
+    """Submit bot to Arena (creates BotVersion) and run placement matches."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json() or {}
+    version_name = data.get('version_name')
+    description = data.get('description', '')
+    
+    version_dict, error = arena_manager.submit_bot_to_arena(
+        user.id, bot_id, version_name, description
+    )
+    if error:
+        return jsonify({'error': error}), 400
+    
+    # Run placement matches synchronously
+    # Get all other active arena bots
+    opponents = Bot.query.filter(
+        Bot.id != bot_id,
+        Bot.is_active == True,
+        Bot.latest_version_number > 0
+    ).all()
+    
+    placement_results = []
+    for opponent in opponents:
+        try:
+            # Create and run a match
+            game_id = str(uuid.uuid4())
+            match = arena_manager.create_match(bot_id, opponent.id, game_id)
+            if not match:
+                continue
+            
+            # Execute the game
+            result = _execute_arena_match(game_id, bot_id, opponent.id)
+            placement_results.append({
+                'opponent': opponent.name,
+                'result': result.get('winner') if result else 'error'
+            })
+        except Exception as e:
+            logging.getLogger(__name__).exception(f"Error in placement match vs {opponent.name}")
+    
+    return jsonify({
+        'version': version_dict,
+        'message': f"Bot submitted to Arena as version {version_dict['version_name']}",
+        'placement_matches': len(placement_results),
+        'results': placement_results
+    }), 201
+
+
+@app.route('/api/bots/<int:bot_id>', methods=['GET'])
+@jwt_required()
+def api_get_bot(bot_id):
+    """Get a specific bot."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    bot = arena_manager.get_bot(bot_id)
+    if not bot:
+        return jsonify({'error': 'Bot not found'}), 404
+    
+    # Include code only if user owns the bot
+    include_code = (bot['user_id'] == user.id)
+    if include_code:
+        bot = arena_manager.get_bot(bot_id, include_code=True)
+    
+    return jsonify({'bot': bot}), 200
+
+
+@app.route('/api/bots/<int:bot_id>/deactivate', methods=['POST'])
+@jwt_required()
+def api_deactivate_bot(bot_id):
+    """Deactivate a bot."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    bot_dict, error = arena_manager.deactivate_bot(bot_id, user.id)
+    if error:
+        return jsonify({'error': error}), 403
+    
+    return jsonify({'bot': bot_dict, 'message': 'Bot deactivated'}), 200
+
+
+@app.route('/api/bots/<int:bot_id>/versions', methods=['GET'])
+@jwt_required()
+def api_get_bot_versions(bot_id):
+    """Get all versions of a bot."""
+    from models import Bot, BotVersion
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    bot = Bot.query.get(bot_id)
+    if not bot:
+        return jsonify({'error': 'Bot not found'}), 404
+    
+    # Only bot owner can see versions
+    if bot.user_id != user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    versions = BotVersion.query.filter_by(bot_id=bot_id).order_by(BotVersion.version_number.desc()).all()
+    return jsonify({'versions': [v.to_dict(include_code=True) for v in versions]}), 200
+
+
+@app.route('/api/bots/<int:bot_id>/versions/<int:version_number>', methods=['GET'])
+@jwt_required()
+def api_get_bot_version(bot_id, version_number):
+    """Get a specific version of a bot."""
+    from models import Bot, BotVersion
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    bot = Bot.query.get(bot_id)
+    if not bot:
+        return jsonify({'error': 'Bot not found'}), 404
+    
+    # Only bot owner can see versions
+    if bot.user_id != user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    version = BotVersion.query.filter_by(bot_id=bot_id, version_number=version_number).first()
+    if not version:
+        return jsonify({'error': 'Version not found'}), 404
+    
+    return jsonify({'version': version.to_dict(include_code=True)}), 200
+
+
+@app.route('/api/bots/<int:bot_id>/rollback/<int:version_number>', methods=['POST'])
+@jwt_required()
+def api_rollback_bot_version(bot_id, version_number):
+    """Rollback bot to a specific version."""
+    from models import Bot, BotVersion
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    bot = Bot.query.get(bot_id)
+    if not bot:
+        return jsonify({'error': 'Bot not found'}), 404
+    
+    # Only bot owner can rollback
+    if bot.user_id != user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    # Get the target version
+    target_version = BotVersion.query.filter_by(bot_id=bot_id, version_number=version_number).first()
+    if not target_version:
+        return jsonify({'error': 'Version not found'}), 404
+    
+    # Create a new version with the old code
+    new_version = bot.create_version(target_version.code, f'Rollback to version {version_number}')
+    db.session.commit()
+    
+    return jsonify({
+        'bot': bot.to_dict(include_code=True),
+        'version': new_version.to_dict(include_code=True),
+        'message': f'Rolled back to version {version_number}'
+    }), 200
+
+
+@app.route('/api/arena/challenge', methods=['POST'])
+@jwt_required()
+def api_challenge_bot():
+    """Challenge another bot to a match."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    my_bot_id = data.get('my_bot_id')
+    opponent_bot_id = data.get('opponent_bot_id')
+    
+    if not my_bot_id:
+        return jsonify({'error': 'my_bot_id is required'}), 400
+    
+    # Get bots
+    my_bot = Bot.query.get(my_bot_id)
+    if not my_bot or my_bot.user_id != user.id:
+        return jsonify({'error': 'Bot not found or you don\'t own it'}), 403
+    
+    # Find opponent if not specified
+    if not opponent_bot_id:
+        opponent_bot = arena_manager.find_opponent(my_bot_id)
+        if not opponent_bot:
+            return jsonify({'error': 'No suitable opponent found'}), 404
+        opponent_bot_id = opponent_bot.id
+    else:
+        opponent_bot = Bot.query.get(opponent_bot_id)
+        if not opponent_bot:
+            return jsonify({'error': 'Opponent bot not found'}), 404
+    
+    # Create game using existing game creation logic
+    game_id = str(uuid.uuid4())
+    referee = PacmanReferee()
+    referee.init_game({})
+    
+    game_entry = {
+        'game_id': game_id,
+        'referee': 'pacman',
+        'referee_obj': referee,
+        'player_code': my_bot.code,
+        'opponent_code': opponent_bot.code,
+        'player_bot_id': my_bot_id,
+        'opponent_bot_id': opponent_bot_id,
+        'is_arena_match': True
+    }
+    GAMES[game_id] = game_entry
+    
+    # Create match record
+    match = arena_manager.create_match(my_bot_id, opponent_bot_id, game_id)
+    if not match:
+        return jsonify({'error': 'Failed to create match'}), 500
+    
+    save_games_index_entry(game_id, {
+        'referee': 'pacman',
+        'player_bot_id': my_bot_id,
+        'opponent_bot_id': opponent_bot_id,
+        'match_id': match.id
+    })
+    
+    return jsonify({
+        'game_id': game_id,
+        'match_id': match.id,
+        'message': 'Match created successfully'
+    }), 201
+
+
+@app.route('/api/arena/leaderboard', methods=['GET'])
+def api_get_leaderboard():
+    """Get the leaderboard (public endpoint)."""
+    limit = request.args.get('limit', 50, type=int)
+    leaderboard = arena_manager.get_leaderboard(limit=min(limit, 100))
+    return jsonify({'leaderboard': leaderboard}), 200
+
+
+@app.route('/api/arena/matches', methods=['GET'])
+@jwt_required()
+def api_get_match_history():
+    """Get match history for the current user."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    limit = request.args.get('limit', 20, type=int)
+    matches = arena_manager.get_match_history(user_id=user.id, limit=min(limit, 100))
+    return jsonify({'matches': matches}), 200
+
+
+@app.route('/api/arena/matches/<int:match_id>', methods=['GET'])
+def api_get_match(match_id):
+    """Get details of a specific match (public endpoint)."""
+    match = Match.query.get(match_id)
+    if not match:
+        return jsonify({'error': 'Match not found'}), 404
+    
+    return jsonify({'match': match.to_dict()}), 200
+
+
+# Modify the existing step endpoint to complete arena matches
+_original_step = None
+
+def _wrap_step_for_arena():
+    """Wrap the step endpoint to detect and complete arena matches."""
+    global _original_step
+    
+    # Find the step function
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint == 'step_game':
+            _original_step = app.view_functions[rule.endpoint]
+            break
+    
+    if not _original_step:
+        return
+    
+    def wrapped_step_game(game_id):
+        # Call original step
+        response = _original_step(game_id)
+        
+        # Check if this is an arena match and if it's finished
+        game_entry = GAMES.get(game_id)
+        if game_entry and game_entry.get('is_arena_match'):
+            referee = game_entry.get('referee_obj')
+            if referee and referee.is_finished():
+                # Get match record
+                idx = load_games_index()
+                meta = idx.get(game_id, {})
+                match_id = meta.get('match_id')
+                
+                if match_id:
+                    state = referee.get_state()
+                    winner = state.get('winner')
+                    player_score = state.get('scores', {}).get('player', 0)
+                    opponent_score = state.get('scores', {}).get('opponent', 0)
+                    turns = state.get('turn', 0)
+                    
+                    arena_manager.complete_match(
+                        match_id,
+                        winner,
+                        player_score,
+                        opponent_score,
+                        turns
+                    )
+        
+        return response
+    
+    # Replace the endpoint
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint == 'step_game':
+            app.view_functions[rule.endpoint] = wrapped_step_game
+            break
+
+# Apply the wrapper after app initialization
+_wrap_step_for_arena()
 
 
 if __name__ == '__main__':

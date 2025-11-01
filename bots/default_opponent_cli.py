@@ -4,12 +4,13 @@ This skeleton reads the initial map (width, height, rows) once, then enters a
 loop reading per-turn inputs and printing a single action.
 
 The referee accepts a single-line action in one of the forms:
-  - "STAY"
   - "MOVE <x> <y>"          (legacy)
   - "MOVE <pac_id> <x> <y>" (recommended: include pac id)
 
+Note: "STAY" is NO LONGER allowed. To stay in place, use MOVE to your current position.
+
 Example usage (print with flush=True):
-  print("STAY", flush=True)
+  print(f"MOVE {pac_id} {px} {py}", flush=True)  # stay in place at (px, py)
   print("MOVE 0 3 2", flush=True)  # move pac id 0 to absolute coords (3,2)
 
 Use stderr prints for debugging: print('dbg', file=sys.stderr, flush=True)
@@ -168,9 +169,15 @@ while True:
             # Debug info (uncomment to see decision-making)
             # print(f"Target: ({tx},{ty}) | Opp targets: {opponent_predicted_targets} | Opp next: {opponent_next_positions}", file=sys.stderr, flush=True)
         else:
-            # No safe pellet found, stay put
-            print("STAY", flush=True)
+            # No safe pellet found, stay at current position
+            print(f"MOVE {pac_id} {px} {py}", flush=True)
     else:
-        # Nothing to do or no visible pellets
-        print("STAY", flush=True)
+        # Nothing to do or no visible pellets - stay at current position
+        if my_pacs:
+            pac0 = my_pacs[0]
+            pac_id, _, px, py = pac0
+            print(f"MOVE {pac_id} {px} {py}", flush=True)
+        else:
+            # Fallback: send MOVE 0 0 0 (will likely be invalid but better than nothing)
+            print("MOVE 0 0 0", flush=True)
 

@@ -1,53 +1,14 @@
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <title>GameArena Prototype</title>
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body>
-  <div id="app">
-    <header>
-      <h1>GameArena Prototype</h1>
-    </header>
-    <main>
-      <section id="left">
-        <h2>Editor</h2>
-        <textarea id="editor" rows="16">
-# Example bot: read stdin and output MOVE dx dy
-import sys
-text = sys.stdin.read()
-# simple bot: always move right
-print('MOVE 1 0')
-</textarea>
-        <div>
-          <button id="startBtn">Start Game</button>
-          <button id="stepBtn">Step</button>
-          <button id="historyBtn">Fetch History</button>
-        </div>
-        <h3>Protocol</h3>
-        <pre id="protocol"></pre>
-      </section>
-
-      <section id="center">
-        <h2>Visualizer</h2>
-        <div id="visualizer"></div>
-        <div id="controls">
-          <button id="prevBtn">Prev</button>
-          <button id="playBtn">Play</button>
-          <button id="nextBtn">Next</button>
-          <span id="turnInfo">Turn: 0</span>
-        </div>
-      </section>
-
-      <section id="right">
-        <h2>Referee Logs</h2>
-        <pre id="logs"></pre>
-        <h2>Bot IO</h2>
-        <pre id="botio"></pre>
-      </section>
-    </main>
-  </div>
-  <script src="/static/app.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GameArena Frontend (React + Vite)</title>
+    <script type="module" crossorigin src="/assets/index-Cdjvlpu9.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BNS7ibCy.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>
+

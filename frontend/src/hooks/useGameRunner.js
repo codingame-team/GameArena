@@ -4,7 +4,7 @@ import axios from 'axios'
 // tested independently. The hook does not keep its own UI state; instead it
 // calls the setters and updates refs passed by the caller (App.jsx).
 export default function useGameRunner({
-  API_BASE,
+  API_BASE_URL,
   appendLog,
   // refs controlling concurrent operations
   collectingRef,
@@ -30,7 +30,7 @@ export default function useGameRunner({
     if(stoppedRef) stoppedRef.current = false
     try{
       while(!finished && !(stoppedRef && stoppedRef.current)){
-        const sres = await axios.post(`${API_BASE}/api/games/${gid}/step`)
+        const sres = await axios.post(`${API_BASE_URL}/api/games/${gid}/step`)
         const data = sres.data || {}
         if(data.finished){
           finished = true
@@ -49,7 +49,7 @@ export default function useGameRunner({
 
     // If finished but collected empty, try GET /history
     if(collected.length === 0 && !(stoppedRef && stoppedRef.current)){
-      try{ const hres = await axios.get(`${API_BASE}/api/games/${gid}/history`); if(hres && hres.data && Array.isArray(hres.data.history)) collected.splice(0, collected.length, ...hres.data.history) }
+      try{ const hres = await axios.get(`${API_BASE_URL}/api/games/${gid}/history`); if(hres && hres.data && Array.isArray(hres.data.history)) collected.splice(0, collected.length, ...hres.data.history) }
       catch(e){ appendLog && appendLog('Failed to fetch history: ' + (e && e.message ? e.message : String(e))) }
     }
     return collected
