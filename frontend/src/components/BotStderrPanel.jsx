@@ -129,13 +129,25 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
       return '#333'
     }
 
+    // Calculate ranks considering ties (ex-aequo)
+    let currentRank = 1
+    const itemsWithRank = items.map((item, idx) => {
+      // If same score as previous item, keep same rank
+      if (idx > 0 && items[idx - 1].score === item.score) {
+        // Don't increment currentRank
+      } else {
+        currentRank = idx + 1
+      }
+      return { ...item, rank: currentRank }
+    })
+
     return (
       <div className="ranking">
         <h4>Classement final</h4>
         <ol>
-          {items.map((it, idx) => (
+          {itemsWithRank.map((it) => (
             <li key={it.id} className={"ranking-item " + (winner === it.id ? 'winner' : '')}>
-              <span className="pos">{idx + 1}.</span>
+              <span className="pos">{it.rank}.</span>
               <span className="name" style={{ color: getPlayerColor(it.id) }}>{getDisplayName(it.id)}</span>
               <span className="score">{it.score}</span>
             </li>

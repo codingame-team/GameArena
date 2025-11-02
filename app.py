@@ -817,6 +817,17 @@ def api_get_current_user():
     return jsonify({'user': user.to_dict()}), 200
 
 
+@app.route('/api/user/profile', methods=['GET'])
+@jwt_required()
+def api_get_user_profile():
+    """Get current user's profile information."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify({'user': user.to_dict()}), 200
+
+
 @app.route('/api/user/avatar', methods=['GET'])
 @jwt_required()
 def api_get_user_avatar():
@@ -916,6 +927,31 @@ def api_upload_avatar():
 def api_get_avatar_image():
     """Serve custom avatar image for current user."""
     user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Check if user has custom avatar
+    if not user.avatar or not user.avatar.startswith('custom_'):
+        return jsonify({'error': 'No custom avatar'}), 404
+    
+    # Find the avatar file
+    avatars_dir = os.path.join(app.instance_path, 'avatars')
+    
+    for ext in ['.png', '.jpg', '.jpeg', '.gif', '.svg']:
+        filepath = os.path.join(avatars_dir, f'{user.id}{ext}')
+        if os.path.exists(filepath):
+            # Determine mimetype
+            mimetype = 'image/svg+xml' if ext == '.svg' else f'image/{ext[1:]}'
+            return send_file(filepath, mimetype=mimetype)
+    
+    return jsonify({'error': 'Avatar file not found'}), 404
+
+
+@app.route('/api/user/<int:user_id>/avatar/image', methods=['GET'])
+@jwt_required()
+def api_get_user_avatar_image(user_id):
+    """Serve custom avatar image for a specific user (for displaying bot owner avatars)."""
+    user = User.query.get(user_id)
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
