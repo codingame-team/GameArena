@@ -78,7 +78,7 @@ class Bot(db.Model):
             'id': self.id,
             'user_id': self.user_id,
             'owner_username': self.owner.username if self.owner else None,
-b            'owner_avatar': self.owner.avatar if self.owner else 'my_bot',
+            'owner_avatar': self.owner.avatar if self.owner else 'my_bot',
             'name': self.name,
             'referee_type': self.referee_type,
             'created_at': self.created_at.isoformat(),
