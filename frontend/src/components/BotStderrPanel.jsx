@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 
 // BotStderrPanel: simplified dropdown (button + popup with checkboxes)
-export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, gameState, fullHistory, isCollecting, currentIndex, onTurnClick }) {
+export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, gameState, fullHistory, isCollecting, currentIndex, onTurnClick, player1Name = 'Joueur 1', player2Name = 'Joueur 2' }) {
   const player = (botLogs && botLogs.player) || {}
   const opponent = (botLogs && botLogs.opponent) || {}
   const playerErr = player.stderr || ''
@@ -115,6 +115,20 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
     items.sort((a, b) => b.score - a.score)
   // const winner = gameState.winner
 
+    // Map player/opponent IDs to display names
+    const getDisplayName = (id) => {
+      if (id === 'player') return player1Name
+      if (id === 'opponent') return player2Name
+      return id
+    }
+    
+    // Get color for player name
+    const getPlayerColor = (id) => {
+      if (id === 'player') return '#ff4444'  // Rouge pour Joueur 1
+      if (id === 'opponent') return '#4444ff'  // Bleu pour Joueur 2
+      return '#333'
+    }
+
     return (
       <div className="ranking">
         <h4>Classement final</h4>
@@ -122,7 +136,7 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
           {items.map((it, idx) => (
             <li key={it.id} className={"ranking-item " + (winner === it.id ? 'winner' : '')}>
               <span className="pos">{idx + 1}.</span>
-              <span className="name">{it.id}</span>
+              <span className="name" style={{ color: getPlayerColor(it.id) }}>{getDisplayName(it.id)}</span>
               <span className="score">{it.score}</span>
             </li>
           ))}
@@ -194,8 +208,8 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
                         <div className="turn-section">
                           <div className="turn-section-title">Sortie standard :</div>
                           <pre className="turn-pre">
-                            {playerStdout && `[Player] ${playerStdout}`}
-                            {opponentStdout && `[Opponent] ${opponentStdout}`}
+                            {playerStdout && `[${player1Name}] ${playerStdout}`}
+                            {opponentStdout && `[${player2Name}] ${opponentStdout}`}
                             {!playerStdout && !opponentStdout && '—'}
                           </pre>
                         </div>
@@ -205,8 +219,8 @@ export default function BotStderrPanel({ botLogs, globalStdout, globalStderr, ga
                         <div className="turn-section">
                           <div className="turn-section-title">Sortie d'erreur :</div>
                           <pre className="turn-pre">
-                            {playerStderr && `[Player] ${playerStderr}`}
-                            {opponentStderr && `[Opponent] ${opponentStderr}`}
+                            {playerStderr && `[${player1Name}] ${playerStderr}`}
+                            {opponentStderr && `[${player2Name}] ${opponentStderr}`}
                           </pre>
                         </div>
                       )}

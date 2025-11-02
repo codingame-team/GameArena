@@ -804,3 +804,21 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
   background: #fff3cd;
   color: #856404;
 }
+
+/* Avatar Settings Page */
+.avatar-settings {
+  padding: 24px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.settings-container {
+  background: var(--frame-bg);
+  padding: 32px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.settings-section {
+  margin-bottom: 24px;
+}

@@ -5,7 +5,8 @@ parsed/in-memory execution paths. Bots are executed per-turn via a BotRunner
 (using a persisted file path if present, or inline code attached to the game
 entry).
 """
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, send_file
+from werkzeug.utils import secure_filename
 from referees.pacman_referee import PacmanReferee
 import os
 import pathlib
@@ -174,8 +175,45 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
     bot_code = None
     bot_path = None
     is_arena_match = game.get('is_arena_match', False)
+    mode = game.get('mode', 'player-vs-bot')
     
-    if role == 'player':
+    # Bot-vs-bot mode: map player/opponent roles to bot1/bot2
+    if mode == 'bot-vs-bot':
+        bot_setting = game.get('bot1') if role == 'player' else game.get('bot2')
+        try:
+            bot_id = int(bot_setting)
+            from models import Bot
+            bot = Bot.query.get(bot_id)
+            if bot:
+                if is_arena_match and bot.latest_version_number > 0:
+                    active_version = bot.get_active_version()
+                    if active_version:
+                        bot_code = active_version.code
+                        bot_path = f'db:bot:{bot_id}:v{active_version.version_number}'
+                        logging.getLogger(__name__).info(f'Using bot from Arena ({role}): id=%s, name=%s, version=%s', 
+                                                        bot_id, bot.name, active_version.version_name)
+                    else:
+                        bot_code = bot.code
+                        bot_path = f'db:bot:{bot_id}'
+                else:
+                    bot_code = bot.code
+                    bot_path = f'db:bot:{bot_id}:draft'
+                    logging.getLogger(__name__).info(f'Using bot draft ({role}): id=%s, name=%s', bot_id, bot.name)
+        except (ValueError, TypeError):
+            # Fallback to Boss or other default
+            if bot_setting == 'Boss' or not bot_setting:
+                bot_path = 'bots/default_opponent_cli.py'
+                if os.path.exists(bot_path):
+                    try:
+                        with open(bot_path, 'r', encoding='utf-8') as f:
+                            bot_code = f.read()
+                    except Exception:
+                        pass
+        
+        if not bot_code:
+            bot_code = 'print("STAY")'
+        
+    elif role == 'player':
         # Check if player is specified by bot ID (Arena match)
         player_bot_id = game.get('player_bot_id')
         if player_bot_id:
@@ -434,31 +472,45 @@ def get_player_template():
 def create_game():
     body = request.json or {}
     referee_name = body.get('referee', 'pacman')
-    player_code = body.get('player_code', None)
-    opponent = body.get('opponent', 'Boss')
+    mode = body.get('mode', 'player-vs-bot')  # 'player-vs-bot' or 'bot-vs-bot'
     bot_runner = body.get('bot_runner')
+    
     maker = REFEREES.get(referee_name)
     if not maker:
         return jsonify({'error':'unknown referee'}), 400
     ref = maker()
     ref.init_game({})
     game_id = str(uuid.uuid4())
-    game_entry = {
-        'id': game_id,
-        'ref': ref,
-        'player_code': None,
-        'player_bot_id': None,
-        'opponent': opponent,
-        'bot_runner': bot_runner,
-        'history': []
-    }
-    # Store bot ID and code directly in game_entry (no file persistence)
-    player_bot_id = body.get('player_bot_id')
-    if player_bot_id:
-        game_entry['player_bot_id'] = player_bot_id
     
-    if player_code:
-        game_entry['player_code'] = player_code
+    if mode == 'bot-vs-bot':
+        # Bot vs Bot mode: two bots specified
+        bot1 = body.get('bot1', 'Boss')
+        bot2 = body.get('bot2', 'Boss')
+        game_entry = {
+            'id': game_id,
+            'ref': ref,
+            'mode': 'bot-vs-bot',
+            'bot1': bot1,
+            'bot2': bot2,
+            'bot_runner': bot_runner,
+            'history': []
+        }
+    else:
+        # Default mode: player vs opponent
+        player_code = body.get('player_code', None)
+        opponent = body.get('opponent', 'Boss')
+        player_bot_id = body.get('player_bot_id')
+        
+        game_entry = {
+            'id': game_id,
+            'ref': ref,
+            'mode': 'player-vs-bot',
+            'player_code': player_code,
+            'player_bot_id': player_bot_id,
+            'opponent': opponent,
+            'bot_runner': bot_runner,
+            'history': []
+        }
 
     game_entry['history'] = ref.history
 
@@ -765,6 +817,125 @@ def api_get_current_user():
     return jsonify({'user': user.to_dict()}), 200
 
 
+@app.route('/api/user/avatar', methods=['GET'])
+@jwt_required()
+def api_get_user_avatar():
+    """Get current user's avatar."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify({'avatar': user.avatar or 'my_bot'}), 200
+
+
+@app.route('/api/user/avatar', methods=['POST'])
+@jwt_required()
+def api_set_user_avatar():
+    """Set current user's avatar."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    data = request.get_json()
+    avatar = data.get('avatar')
+    
+    if not avatar:
+        return jsonify({'error': 'Avatar is required'}), 400
+    
+    # Validate avatar (optional - list of allowed avatars)
+    allowed_avatars = ['my_bot', 'boss', 'ninja', 'warrior', 'wizard', 'knight', 'archer', 'alien']
+    if not avatar.startswith('custom_') and avatar not in allowed_avatars:
+        return jsonify({'error': 'Invalid avatar'}), 400
+    
+    user.avatar = avatar
+    db.session.commit()
+    
+    return jsonify({'success': True, 'avatar': user.avatar}), 200
+
+
+@app.route('/api/user/avatar/upload', methods=['POST'])
+@jwt_required()
+def api_upload_avatar():
+    """Upload a custom avatar image."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Check if file is present
+    if 'avatar' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['avatar']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        return jsonify({'error': 'File must be an image'}), 400
+    
+    # Get file extension
+    filename = secure_filename(file.filename)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ['.png', '.jpg', '.jpeg', '.gif', '.svg']:
+        return jsonify({'error': 'Invalid image format'}), 400
+    
+    # Create avatars directory if it doesn't exist
+    avatars_dir = os.path.join(app.instance_path, 'avatars')
+    os.makedirs(avatars_dir, exist_ok=True)
+    
+    # Save file with user ID as name
+    avatar_filename = f'{user.id}{ext}'
+    filepath = os.path.join(avatars_dir, avatar_filename)
+    
+    # Delete old custom avatar if exists
+    for old_ext in ['.png', '.jpg', '.jpeg', '.gif', '.svg']:
+        old_path = os.path.join(avatars_dir, f'{user.id}{old_ext}')
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except Exception as e:
+                app.logger.warning(f"Failed to delete old avatar: {e}")
+    
+    # Save new file
+    try:
+        file.save(filepath)
+    except Exception as e:
+        app.logger.error(f"Failed to save avatar: {e}")
+        return jsonify({'error': 'Failed to save file'}), 500
+    
+    # Update user avatar reference
+    avatar_id = f'custom_{user.id}'
+    user.avatar = avatar_id
+    db.session.commit()
+    
+    return jsonify({'success': True, 'avatar': avatar_id}), 200
+
+
+@app.route('/api/user/avatar/image', methods=['GET'])
+@jwt_required()
+def api_get_avatar_image():
+    """Serve custom avatar image for current user."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Check if user has custom avatar
+    if not user.avatar or not user.avatar.startswith('custom_'):
+        return jsonify({'error': 'No custom avatar'}), 404
+    
+    # Find the avatar file
+    avatars_dir = os.path.join(app.instance_path, 'avatars')
+    
+    for ext in ['.png', '.jpg', '.jpeg', '.gif', '.svg']:
+        filepath = os.path.join(avatars_dir, f'{user.id}{ext}')
+        if os.path.exists(filepath):
+            # Determine mimetype
+            mimetype = 'image/svg+xml' if ext == '.svg' else f'image/{ext[1:]}'
+            return send_file(filepath, mimetype=mimetype)
+    
+    return jsonify({'error': 'Avatar file not found'}), 404
+
+
 # ==================== BOT/ARENA ENDPOINTS ====================
 
 @app.route('/api/bots', methods=['GET'])
@@ -953,7 +1124,7 @@ def _execute_game_turn(game_entry, ref):
     turn_num = state_before.get('turn', 0)
     scores_before = state_before.get('scores', {})
     pellets_before = state_before.get('pellets', [])
-    logging.getLogger(__name__).info(f"Turn {turn_num}: scores={scores_before}, pellets_count={len(pellets_before)}")
+    # logging.getLogger(__name__).info(f"Turn {turn_num}: scores={scores_before}, pellets_count={len(pellets_before)}")
     
     # Run player bot
     player_input = ref.make_bot_input('player')
@@ -970,7 +1141,7 @@ def _execute_game_turn(game_entry, ref):
     )
     
     # Log actions received
-    logging.getLogger(__name__).info(f"Turn {turn_num}: player_action='{player_action}', opponent_action='{opp_action}'")
+    #logging.getLogger(__name__).info(f"Turn {turn_num}: player_action='{player_action}', opponent_action='{opp_action}'")
     
     # Apply actions (step expects a dict)
     actions_by_bot = {
@@ -983,7 +1154,7 @@ def _execute_game_turn(game_entry, ref):
     state_after = ref.get_state()
     scores_after = state_after.get('scores', {})
     pellets_after = state_after.get('pellets', [])
-    logging.getLogger(__name__).info(f"Turn {turn_num}: after step: scores={scores_after}, pellets_count={len(pellets_after)}")
+    # logging.getLogger(__name__).info(f"Turn {turn_num}: after step: scores={scores_after}, pellets_count={len(pellets_after)}")
 
 
 @app.route('/api/bots/<int:bot_id>/submit-to-arena', methods=['POST'])
@@ -1148,6 +1319,40 @@ def api_rollback_bot_version(bot_id, version_number):
         'bot': bot.to_dict(include_code=True),
         'version': new_version.to_dict(include_code=True),
         'message': f'Rolled back to version {version_number}'
+    }), 200
+
+
+@app.route('/api/bots/<int:bot_id>/load-version/<int:version_number>', methods=['POST'])
+@jwt_required()
+def api_load_bot_version_to_playground(bot_id, version_number):
+    """Load a specific version into Playground (updates bot.code without creating new version)."""
+    from models import Bot, BotVersion
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    bot = Bot.query.get(bot_id)
+    if not bot:
+        return jsonify({'error': 'Bot not found'}), 404
+    
+    # Only bot owner can load versions
+    if bot.user_id != user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    # Get the target version
+    target_version = BotVersion.query.filter_by(bot_id=bot_id, version_number=version_number).first()
+    if not target_version:
+        return jsonify({'error': 'Version not found'}), 404
+    
+    # Update bot's current code (Playground draft)
+    bot.code = target_version.code
+    bot.updated_at = dt.datetime.utcnow()
+    db.session.commit()
+    
+    return jsonify({
+        'bot': bot.to_dict(include_code=True),
+        'message': f'Version {version_number} loaded into Playground',
+        'version_loaded': target_version.to_dict(include_code=False)
     }), 200
 
 

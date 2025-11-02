@@ -126,7 +126,9 @@ export default function Visualizer({
   animationDelay,
   setAnimationDelay,
   isAnimating,
-  isPaused
+  isPaused,
+  player1Name = 'Joueur 1',
+  player2Name = 'Joueur 2'
 }){
   // If no valid index is provided (e.g. -1), show the initial state (turn 0) when available.
   const safeIndex = (typeof index === 'number' && index >= 0) ? index : (Array.isArray(history) && history.length > 0 ? 0 : -1)
@@ -142,9 +144,9 @@ export default function Visualizer({
   const winner = state?.winner
   let winnerMessage = null
   if (winner === 'player') {
-    winnerMessage = { text: 'Le joueur gagne ! 🎉', color: '#ff4444' }
+    winnerMessage = { text: `${player1Name} gagne ! 🎉`, color: '#ff4444' }
   } else if (winner === 'opponent') {
-    winnerMessage = { text: "L'adversaire gagne !", color: '#4444ff' }
+    winnerMessage = { text: `${player2Name} gagne !`, color: '#4444ff' }
   } else if (winner === 'draw') {
     winnerMessage = { text: 'Match nul !', color: '#ffaa00' }
   }

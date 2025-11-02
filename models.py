@@ -15,6 +15,7 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     elo_rating = db.Column(db.Integer, default=1200)  # Starting ELO
+    avatar = db.Column(db.String(50), default='my_bot')  # Avatar identifier
     
     # Relationships
     bots = db.relationship('Bot', backref='owner', lazy=True, cascade='all, delete-orphan')
@@ -36,7 +37,8 @@ class User(db.Model):
             'username': self.username,
             'email': self.email,
             'created_at': self.created_at.isoformat(),
-            'elo_rating': self.elo_rating
+            'elo_rating': self.elo_rating,
+            'avatar': self.avatar or 'my_bot'
         }
 
 

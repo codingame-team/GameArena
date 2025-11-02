@@ -1,9 +1,17 @@
 import React from 'react'
 import Editor from '@monaco-editor/react'
 
-export default function MonacoEditor({value, onChange, language='python', theme='light'}){
+export default function MonacoEditor({value, onChange, language='python', theme='light', options={}}){
   // choose monaco theme
   const monacoTheme = theme === 'dark' ? 'vs-dark' : 'vs'
+  
+  // Merge default options with provided options
+  const editorOptions = {
+    minimap: { enabled: false },
+    fontSize: 13,
+    ...options
+  }
+  
   // make the editor fill its container; parent should provide sizing (flex/minHeight)
   return (
     <div style={{display: 'flex', flex: 1, minHeight: 0, border: '1px solid #ddd'}}>
@@ -14,7 +22,7 @@ export default function MonacoEditor({value, onChange, language='python', theme=
         defaultValue={value}
         value={value}
         onChange={(v)=> onChange(v)}
-        options={{ minimap: { enabled: false }, fontSize: 13 }}
+        options={editorOptions}
       />
     </div>
   )
