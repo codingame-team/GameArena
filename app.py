@@ -1,9 +1,12 @@
-"""Flask backend for bot arena prototype (simplified).
+"""Flask backend for bot arena prototype (refactored).
 
-This cleaned version removes support for persistent local bot processes and the
-parsed/in-memory execution paths. Bots are executed per-turn via a BotRunner
-(using a persisted file path if present, or inline code attached to the game
-entry).
+Architecture:
+- API Layer (app.py): Routes HTTP, validation inputs
+- Service Layer (services/): Logique métier
+- Repository Layer (repositories/): Accès données
+- Domain Layer (game_sdk, models): Entités et règles métier
+
+SOLID compliant avec séparation des responsabilités.
 """
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from werkzeug.utils import secure_filename
@@ -25,6 +28,13 @@ import json
 import re
 import traceback
 import datetime as dt
+
+# Import des services et repositories (DIP)
+from services.bot_service import BotService
+from services.game_service import GameService
+from repositories.bot_repository import BotRepository
+from repositories.game_repository import GameRepository
+from repositories.user_repository import UserRepository
 
 # Configure basic logging so INFO logs appear in the Flask console by default
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -80,11 +90,22 @@ except OSError as e:
 # Simple games index persisted to disk to allow short-lived server restarts without losing game ids
 GAMES_INDEX_PATH = os.path.join(PERSISTENT_BOTS_DIR, 'games_index.json')
 
-# In-memory games store
+# In-memory games store (legacy, sera progressivement remplacé par GameService)
 GAMES = {}
 REFEREES = {
     'pacman': PacmanReferee
 }
+
+# -------------------- Service Layer Initialization (DIP) --------------------
+# Les services sont injectés avec leurs dépendances (repositories)
+# Pattern: Dependency Injection pour faciliter les tests et respecter SOLID
+
+game_repository = GameRepository(PERSISTENT_BOTS_DIR, 'games_index.json')
+bot_repository = BotRepository()
+user_repository = UserRepository()
+
+bot_service = BotService(bot_repository, game_repository)
+game_service = GameService(REFEREES, game_repository, bot_repository)
 
 # -------------------- helpers --------------------
 
@@ -470,75 +491,80 @@ def get_player_template():
 
 @app.route('/api/games', methods=['POST'])
 def create_game():
+    """Crée une nouvelle partie.
+    
+    API Layer: Validation des inputs et délégation au GameService.
+    Responsabilité: HTTP handling uniquement (SRP).
+    """
     body = request.json or {}
+    
+    # Extraction et validation des paramètres
     referee_name = body.get('referee', 'pacman')
-    mode = body.get('mode', 'player-vs-bot')  # 'player-vs-bot' or 'bot-vs-bot'
+    mode = body.get('mode', 'player-vs-bot')
     bot_runner = body.get('bot_runner')
     
-    maker = REFEREES.get(referee_name)
-    if not maker:
-        return jsonify({'error':'unknown referee'}), 400
-    ref = maker()
-    ref.init_game({})
-    game_id = str(uuid.uuid4())
-    
-    if mode == 'bot-vs-bot':
-        # Bot vs Bot mode: two bots specified
-        bot1 = body.get('bot1', 'Boss')
-        bot2 = body.get('bot2', 'Boss')
-        game_entry = {
-            'id': game_id,
-            'ref': ref,
-            'mode': 'bot-vs-bot',
-            'bot1': bot1,
-            'bot2': bot2,
-            'bot_runner': bot_runner,
-            'history': []
-        }
-    else:
-        # Default mode: player vs opponent
-        player_code = body.get('player_code', None)
-        opponent = body.get('opponent', 'Boss')
-        player_bot_id = body.get('player_bot_id')
+    try:
+        # Délégation à la couche service (SRP + DIP)
+        if mode == 'bot-vs-bot':
+            result = game_service.create_game(
+                referee_name=referee_name,
+                mode='bot-vs-bot',
+                bot1=body.get('bot1', 'Boss'),
+                bot2=body.get('bot2', 'Boss'),
+                bot_runner=bot_runner
+            )
+        else:
+            result = game_service.create_game(
+                referee_name=referee_name,
+                mode='player-vs-bot',
+                player_code=body.get('player_code'),
+                opponent=body.get('opponent', 'Boss'),
+                player_bot_id=body.get('player_bot_id'),
+                bot_runner=bot_runner
+            )
         
-        game_entry = {
-            'id': game_id,
-            'ref': ref,
-            'mode': 'player-vs-bot',
-            'player_code': player_code,
-            'player_bot_id': player_bot_id,
-            'opponent': opponent,
-            'bot_runner': bot_runner,
-            'history': []
-        }
-
-    game_entry['history'] = ref.history
-
-    save_games_index_entry(game_id, {
-        'player_bot_id': game_entry.get('player_bot_id'),
-        'opponent': game_entry.get('opponent'),
-        'bot_runner': game_entry.get('bot_runner'),
-        'referee': referee_name
-    })
-    GAMES[game_id] = game_entry
-    # Log created game with opponent name so it's visible in Flask console
-    logging.getLogger(__name__).info('created game %s, opponent=%s, player_bot_id=%s', game_id, game_entry.get('opponent'), game_entry.get('player_bot_id'))
-    return jsonify({'game_id': game_id})
+        # Sync avec le store legacy (transition progressive)
+        game_id = result['game_id']
+        game_entry = game_service.get_game(game_id)
+        if game_entry:
+            GAMES[game_id] = game_entry
+        
+        return jsonify(result), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to create game')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/games/<game_id>', methods=['GET'])
 def get_game_info(game_id):
-    g = GAMES.get(game_id)
-    if not g:
-        g = restore_game_from_index(game_id)
-    if not g:
-        return jsonify({'error': 'not found'}), 404
-    info = {
-        'id': g.get('id'),
-        'player_bot_id': g.get('player_bot_id'),
-        'opponent': g.get('opponent')
-    }
-    return jsonify({'game': info})
+    """Récupère les informations d'une partie.
+    
+    API Layer: Validation et délégation au GameService.
+    """
+    try:
+        # Essai avec le store legacy d'abord (transition)
+        g = GAMES.get(game_id)
+        if not g:
+            g = game_service.get_game(game_id)
+        if not g:
+            g = restore_game_from_index(game_id)
+        
+        if not g:
+            return jsonify({'error': 'Game not found'}), 404
+        
+        info = {
+            'id': g.get('id'),
+            'player_bot_id': g.get('player_bot_id'),
+            'opponent': g.get('opponent')
+        }
+        return jsonify({'game': info}), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get game info')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/games/<game_id>/step', methods=['POST'])
