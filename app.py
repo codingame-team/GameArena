@@ -202,7 +202,7 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
         except (ValueError, TypeError):
             # Fallback to Boss or other default
             if bot_setting == 'Boss' or not bot_setting:
-                bot_path = 'bots/default_opponent_cli.py'
+                bot_path = 'bots/Boss.py'
                 if os.path.exists(bot_path):
                     try:
                         with open(bot_path, 'r', encoding='utf-8') as f:
