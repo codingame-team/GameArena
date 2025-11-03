@@ -4,6 +4,7 @@ import MonacoEditor from '../components/MonacoEditor'
 import Visualizer from '../components/Visualizer'
 import axios from 'axios'
 import BotStderrPanel from '../components/BotStderrPanel'
+import BotSelectionPanel from '../components/BotSelectionPanel'
 import useGameRunner from '../hooks/useGameRunner'
 import { API_BASE_URL } from '../config'
 import SubmitArenaModal from '../components/SubmitArenaModal'
@@ -92,6 +93,22 @@ export default function PlaygroundPage() {
   // Arena submission modal
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [botVersionInfo, setBotVersionInfo] = useState({ latest_version_number: 0 }) // version info for current bot
+
+  // Bot selection states (declared early to avoid initialization errors)
+  const [selectedLanguage, setSelectedLanguage] = useState('python')
+  const [availableBots, setAvailableBots] = useState([])
+  const [selectedPlayer1, setSelectedPlayer1] = useState(null) // null initially, set to 'bot:X' when user bot loads
+  const [selectedPlayer2, setSelectedPlayer2] = useState('Boss') // 'Boss' or 'bot:X'
+  
+  // Captured player names at game start (to avoid reference issues when selection changes)
+  const [capturedPlayer1Name, setCapturedPlayer1Name] = useState('Joueur 1')
+  const [capturedPlayer2Name, setCapturedPlayer2Name] = useState('Joueur 2')
+  
+  // User avatar (for custom avatars)
+  const [userAvatar, setUserAvatar] = useState('my_bot')
+  const [customAvatarBlobUrl, setCustomAvatarBlobUrl] = useState(null)
+  const [currentUser, setCurrentUser] = useState(null) // Informations de l'utilisateur connecté
+  const [botOwnerAvatars, setBotOwnerAvatars] = useState({}) // Map bot.id -> blob URL for custom avatars
 
   // Helpers to seek through fullHistory/history
   function getTotalTurns() {
@@ -352,6 +369,14 @@ export default function PlaygroundPage() {
     }
   }, [botId])
 
+  // Set the user's bot as player 1 by default when botId is loaded
+  useEffect(() => {
+    if (botId && !selectedPlayer1) {
+      setSelectedPlayer1(`bot:${botId}`)
+      console.log(`✅ Set user bot ${botId} as Player 1`)
+    }
+  }, [botId]) // Only depend on botId, not selectedPlayer1 to avoid loop
+
   async function loadBotVersionInfo(id) {
     try {
       const token = localStorage.getItem('token')
@@ -406,41 +431,37 @@ export default function PlaygroundPage() {
       setCapturedPlayer1Name(getPlayerName(selectedPlayer1))
       setCapturedPlayer2Name(getPlayerName(selectedPlayer2))
 
+      // Save current bot code before starting the game
+      if (botId) { 
+        await saveBotNow(botId, code)
+      }
+
       // Save current bot and request a new run on the backend.
       stoppedRef.current = false
       
       let payload
       
-      if (selectedPlayer1 === 'my-bot') {
-        // Player 1 is "my-bot" -> Use player-vs-bot mode
-        if (botId) { await saveBotNow(botId, code) }
-        
-        let opponentValue = selectedPlayer2
-        if (selectedPlayer2.startsWith('bot:')) {
-          opponentValue = selectedPlayer2.substring(4)
-        }
-        
-        payload = botId 
-          ? { referee: 'pacman', player_bot_id: botId, opponent: opponentValue } 
-          : { referee: 'pacman', player_code: code, opponent: opponentValue }
-      } else {
-        // Player 1 is a selected bot -> Use bot-vs-bot mode
-        let bot1Value = selectedPlayer1
-        if (selectedPlayer1.startsWith('bot:')) {
-          bot1Value = selectedPlayer1.substring(4)
-        }
-        
-        let bot2Value = selectedPlayer2
-        if (selectedPlayer2.startsWith('bot:')) {
-          bot2Value = selectedPlayer2.substring(4)
-        }
-        
-        payload = {
-          referee: 'pacman',
-          bot1: bot1Value,
-          bot2: bot2Value,
-          mode: 'bot-vs-bot'
-        }
+      // Determine if player 1 is the user's bot (botId matches)
+      const isPlayer1UserBot = selectedPlayer1 === `bot:${botId}`
+      const isPlayer2UserBot = selectedPlayer2 === `bot:${botId}`
+      
+      // Extract bot IDs from selections
+      let bot1Value = selectedPlayer1
+      if (selectedPlayer1.startsWith('bot:')) {
+        bot1Value = selectedPlayer1.substring(4)
+      }
+      
+      let bot2Value = selectedPlayer2
+      if (selectedPlayer2.startsWith('bot:')) {
+        bot2Value = selectedPlayer2.substring(4)
+      }
+      
+      // Always use bot-vs-bot mode since we removed "my-bot" option
+      payload = {
+        referee: 'pacman',
+        bot1: bot1Value,
+        bot2: bot2Value,
+        mode: 'bot-vs-bot'
       }
       
       const res = await axios.post(`${API_BASE_URL}/api/games`, payload)
@@ -732,39 +753,15 @@ export default function PlaygroundPage() {
     )
   }
 
-  const [selectedLanguage, setSelectedLanguage] = useState('python')
-  
-  // Bot selection states
-  const [availableBots, setAvailableBots] = useState([])
-  const [selectedPlayer1, setSelectedPlayer1] = useState('my-bot') // 'my-bot' or 'bot:X'
-  const [selectedPlayer2, setSelectedPlayer2] = useState('Boss') // 'Boss' or 'bot:X'
-  
-  // Captured player names at game start (to avoid reference issues when selection changes)
-  const [capturedPlayer1Name, setCapturedPlayer1Name] = useState('Joueur 1')
-  const [capturedPlayer2Name, setCapturedPlayer2Name] = useState('Joueur 2')
-  
-  // Player selection modal
-  const [showPlayerModal, setShowPlayerModal] = useState(null) // null, 'player1', or 'player2'
-  
-  // User avatar (for custom avatars)
-  const [userAvatar, setUserAvatar] = useState('my_bot')
-  const [customAvatarBlobUrl, setCustomAvatarBlobUrl] = useState(null)
-  const [currentUser, setCurrentUser] = useState(null) // Informations de l'utilisateur connecté
-  const [botOwnerAvatars, setBotOwnerAvatars] = useState({}) // Map bot.id -> blob URL for custom avatars
-
   // Helper function to get player display name
   const getPlayerName = (playerSelection) => {
     if (!playerSelection) return 'Aucun joueur'
-    if (playerSelection === 'my-bot') {
-      // Afficher le nom de l'utilisateur connecté
-      return currentUser?.username || 'Mon bot'
-    }
     if (playerSelection === 'Boss') return 'Boss'
     if (typeof playerSelection === 'string' && playerSelection.startsWith('bot:')) {
-      const botId = parseInt(playerSelection.substring(4))
-      const bot = availableBots.find(b => b.id === botId)
+      const selectedBotId = parseInt(playerSelection.substring(4))
+      const bot = availableBots.find(b => b.id === selectedBotId)
       // Afficher le nom de l'utilisateur propriétaire du bot
-      return bot?.owner_username || bot?.name || `Bot #${botId}`
+      return bot?.owner_username || bot?.name || `Bot #${selectedBotId}`
     }
     return playerSelection || 'Aucun joueur'
   }
@@ -773,21 +770,11 @@ export default function PlaygroundPage() {
   const getAvatarUrl = (playerSelection) => {
     if (!playerSelection) return '/avatars/no_avatar.svg'
     
-    // For "my-bot", use user's custom avatar if they have one
-    if (playerSelection === 'my-bot') {
-      if (userAvatar && userAvatar.startsWith('custom_')) {
-        // Use the blob URL if available
-        return customAvatarBlobUrl || '/avatars/my_bot.svg'
-      }
-      // Otherwise use predefined avatar (userAvatar is like 'my_bot', 'ninja', etc.)
-      return `/avatars/${userAvatar}.svg`
-    }
-    
     if (playerSelection === 'Boss') return '/avatars/boss.svg'
     
     if (typeof playerSelection === 'string' && playerSelection.startsWith('bot:')) {
-      const botId = parseInt(playerSelection.substring(4))
-      const bot = availableBots.find(b => b.id === botId)
+      const selectedBotId = parseInt(playerSelection.substring(4))
+      const bot = availableBots.find(b => b.id === selectedBotId)
       
       if (!bot) return '/avatars/no_avatar.svg'
       
@@ -809,19 +796,6 @@ export default function PlaygroundPage() {
     }
     
     return '/avatars/no_avatar.svg'
-  }
-  
-  // Deprecated: kept for backward compatibility but use getAvatarUrl instead
-  const getAvatarFilename = (playerSelection) => {
-    if (!playerSelection) return 'no_avatar.png'
-    if (playerSelection === 'my-bot') return userAvatar ? `${userAvatar}.png` : 'my_bot.png'
-    if (playerSelection === 'Boss') return 'boss.png'
-    if (typeof playerSelection === 'string' && playerSelection.startsWith('bot:')) {
-      const botId = parseInt(playerSelection.substring(4))
-      const bot = availableBots.find(b => b.id === botId)
-      return bot ? `${bot.name.toLowerCase().replace(/\s+/g, '_')}.png` : 'no_avatar.png'
-    }
-    return 'no_avatar.png'
   }
 
   // Fetch available bots on mount
@@ -1097,104 +1071,17 @@ export default function PlaygroundPage() {
 
           <div className="frame controls-frame" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: '15px', padding: '10px' }}>
             {/* SECTION 1: Bot Selection with Avatars (LEFT) */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px' }}>
-              <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>JOUEURS</h4>
-              
-              {/* Avatars in row */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                {/* Player 1 Avatar */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                  <div 
-                    onClick={() => setShowPlayerModal('player1')}
-                    title="Cliquer pour sélectionner Joueur 1"
-                    style={{ 
-                      width: '56px', 
-                      height: '56px', 
-                      cursor: 'pointer',
-                      border: '2px solid #ddd',
-                      borderRadius: '8px',
-                      overflow: 'hidden',
-                      transition: 'transform 0.2s, border-color 0.2s'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.borderColor = '#4a90e2' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = '#ddd' }}
-                  >
-                    <img 
-                      src={getAvatarUrl(selectedPlayer1)}
-                      alt={getPlayerName(selectedPlayer1)}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      onError={(e) => { e.target.src = '/avatars/no_avatar.svg' }}
-                    />
-                  </div>
-                  <div style={{ fontSize: '9px', fontWeight: '600', textAlign: 'center', width: '75px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selectedPlayer1 ? '#ff4444' : '#999' }}>
-                    {selectedPlayer1 ? getPlayerName(selectedPlayer1) : 'Joueur 1'}
-                  </div>
-                  {selectedPlayer1 && (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setSelectedPlayer1(null) }}
-                      style={{ 
-                        fontSize: '8px', 
-                        padding: '2px 5px', 
-                        background: '#ff6b6b', 
-                        color: 'white', 
-                        border: 'none', 
-                        borderRadius: '3px', 
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap'
-                      }}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-                
-                {/* Player 2 Avatar */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                  <div 
-                    onClick={() => setShowPlayerModal('player2')}
-                    title="Cliquer pour sélectionner Joueur 2"
-                    style={{ 
-                      width: '56px', 
-                      height: '56px', 
-                      cursor: 'pointer',
-                      border: '2px solid #ddd',
-                      borderRadius: '8px',
-                      overflow: 'hidden',
-                      transition: 'transform 0.2s, border-color 0.2s'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.borderColor = '#4a90e2' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = '#ddd' }}
-                  >
-                    <img 
-                      src={getAvatarUrl(selectedPlayer2)}
-                      alt={getPlayerName(selectedPlayer2)}
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      onError={(e) => { e.target.src = '/avatars/no_avatar.svg' }}
-                    />
-                  </div>
-                  <div style={{ fontSize: '9px', fontWeight: '600', textAlign: 'center', width: '75px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selectedPlayer2 ? '#4444ff' : '#999' }}>
-                    {selectedPlayer2 ? getPlayerName(selectedPlayer2) : 'Joueur 2'}
-                  </div>
-                  {selectedPlayer2 && (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); setSelectedPlayer2(null) }}
-                      style={{ 
-                        fontSize: '8px', 
-                        padding: '2px 5px', 
-                        background: '#ff6b6b', 
-                        color: 'white', 
-                        border: 'none', 
-                        borderRadius: '3px', 
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap'
-                      }}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
+            <BotSelectionPanel
+              selectedPlayer1={selectedPlayer1}
+              selectedPlayer2={selectedPlayer2}
+              onSelectPlayer1={setSelectedPlayer1}
+              onSelectPlayer2={setSelectedPlayer2}
+              onClearPlayer1={() => setSelectedPlayer1(null)}
+              onClearPlayer2={() => setSelectedPlayer2(null)}
+              getPlayerName={getPlayerName}
+              getAvatarUrl={getAvatarUrl}
+              availableBots={availableBots}
+            />
 
             {/* SECTION 2: Options (Backend, Docker, Theme, Speed) - CENTER */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', minWidth: '150px' }}>
@@ -1307,158 +1194,6 @@ export default function PlaygroundPage() {
         onSubmit={handleSubmitToArena}
         botId={botId}
       />
-
-      {/* Player Selection Modal */}
-      {showPlayerModal && (
-        <div 
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000
-          }}
-          onClick={() => setShowPlayerModal(null)}
-        >
-          <div 
-            style={{
-              background: 'white',
-              borderRadius: '8px',
-              padding: '20px',
-              maxWidth: '500px',
-              maxHeight: '80vh',
-              overflow: 'auto',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 style={{ margin: '0 0 16px 0' }}>
-              Sélectionner {showPlayerModal === 'player1' ? 'Joueur 1' : 'Joueur 2'}
-            </h3>
-            
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-              {/* My Bot option (only for player1) */}
-              {showPlayerModal === 'player1' && (
-                <div
-                  onClick={() => {
-                    setSelectedPlayer1('my-bot')
-                    setShowPlayerModal(null)
-                  }}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '12px',
-                    border: '2px solid #ddd',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    background: selectedPlayer1 === 'my-bot' ? '#e3f2fd' : 'white'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.borderColor = '#4a90e2' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = '#ddd' }}
-                >
-                  <img 
-                    src="/avatars/my_bot.svg"
-                    alt="Mon bot"
-                    style={{ width: '64px', height: '64px', objectFit: 'cover', borderRadius: '4px' }}
-                  />
-                  <div style={{ fontSize: '12px', fontWeight: '600', textAlign: 'center' }}>Mon bot</div>
-                </div>
-              )}
-              
-              {/* Boss option */}
-              <div
-                onClick={() => {
-                  if (showPlayerModal === 'player1') setSelectedPlayer1('Boss')
-                  else setSelectedPlayer2('Boss')
-                  setShowPlayerModal(null)
-                }}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '12px',
-                  border: '2px solid #ddd',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                  background: (showPlayerModal === 'player1' ? selectedPlayer1 : selectedPlayer2) === 'Boss' ? '#fff9e6' : 'white'
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.borderColor = '#ffd700' }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = '#ddd' }}
-              >
-                <img 
-                  src="/avatars/boss.svg"
-                  alt="Boss"
-                  style={{ width: '64px', height: '64px', objectFit: 'cover', borderRadius: '4px' }}
-                />
-                <div style={{ fontSize: '12px', fontWeight: '600', textAlign: 'center' }}>Boss</div>
-              </div>
-              
-              {/* Other bots */}
-              {availableBots.map(bot => (
-                <div
-                  key={bot.id}
-                  onClick={() => {
-                    if (showPlayerModal === 'player1') setSelectedPlayer1(`bot:${bot.id}`)
-                    else setSelectedPlayer2(`bot:${bot.id}`)
-                    setShowPlayerModal(null)
-                  }}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '12px',
-                    border: '2px solid #ddd',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    background: (showPlayerModal === 'player1' ? selectedPlayer1 : selectedPlayer2) === `bot:${bot.id}` ? '#e8f5e9' : 'white'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.borderColor = '#4a90e2' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = '#ddd' }}
-                >
-                  <img 
-                    src={getAvatarUrl(`bot:${bot.id}`)}
-                    alt={bot.name}
-                    style={{ width: '64px', height: '64px', objectFit: 'cover', borderRadius: '4px' }}
-                    onError={(e) => { e.target.src = '/avatars/no_avatar.svg' }}
-                  />
-                  <div style={{ fontSize: '11px', fontWeight: '600', textAlign: 'center', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {bot.name}
-                  </div>
-                  <div style={{ fontSize: '9px', color: '#666' }}>ELO: {bot.elo_rating}</div>
-                </div>
-              ))}
-            </div>
-            
-            <button
-              onClick={() => setShowPlayerModal(null)}
-              style={{
-                marginTop: '16px',
-                width: '100%',
-                padding: '8px',
-                background: '#e0e0e0',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: '600'
-              }}
-            >
-              Annuler
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
