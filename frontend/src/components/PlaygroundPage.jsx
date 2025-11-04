@@ -45,6 +45,8 @@ export default function PlaygroundPage() {
     leftPanelRatio, 
     rowRatio, 
     leftContainerRef,
+    setLeftPanelRatio,
+    setRowRatio,
     startDrag, 
     endDrag
   } = usePanelLayout()
@@ -226,7 +228,7 @@ export default function PlaygroundPage() {
       const deltaX = moveE.clientX - startX
       const deltaRatio = deltaX / containerWidth
       const newRatio = Math.max(0.25, Math.min(0.9, startRatio + deltaRatio))
-      // Note: setLeftPanelRatio est géré dans usePanelLayout
+      setLeftPanelRatio(newRatio)
     }
     const handleMouseUp = () => {
       endDrag()
@@ -248,7 +250,7 @@ export default function PlaygroundPage() {
       const deltaY = moveE.clientY - startY
       const deltaRatio = deltaY / containerHeight
       const newRatio = Math.max(0.1, Math.min(0.9, startRatio + deltaRatio))
-      // Note: setRowRatio est géré dans usePanelLayout
+      setRowRatio(newRatio)
     }
     const handleMouseUp = () => {
       endDrag()
@@ -332,7 +334,7 @@ export default function PlaygroundPage() {
           }}
         >
           {/* Visualizer */}
-          <div className="frame visualizer-frame" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div className="frame visualizer-frame" style={{ display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
             <Visualizer
               history={history}
               index={currentIndex}
