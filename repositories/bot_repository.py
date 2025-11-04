@@ -23,14 +23,27 @@ class BotRepository:
         return Bot.query.get(bot_id)
     
     @staticmethod
-    def find_by_user(user_id: int) -> List[Bot]:
-        """Trouve tous les bots d'un utilisateur."""
-        return Bot.query.filter_by(user_id=user_id, deleted=False).all()
+    def find_by_user(user_id: int, only_active: bool = False) -> List[Bot]:
+        """Trouve tous les bots d'un utilisateur.
+        
+        Args:
+            user_id: ID de l'utilisateur
+            only_active: Si True, filtre uniquement les bots actifs dans l'arène
+            
+        Returns:
+            Liste des bots
+        """
+        if only_active:
+            return Bot.query.filter_by(user_id=user_id, is_active=True).all()
+        return Bot.query.filter_by(user_id=user_id).all()
     
     @staticmethod
     def find_all_active() -> List[Bot]:
-        """Trouve tous les bots actifs (non supprimés)."""
-        return Bot.query.filter_by(deleted=False).all()
+        """Trouve tous les bots actifs dans l'arène (avec au moins une version soumise)."""
+        return Bot.query.filter(
+            Bot.is_active == True,
+            Bot.latest_version_number > 0
+        ).all()
     
     @staticmethod
     def save(bot: Bot) -> Bot:
@@ -41,28 +54,44 @@ class BotRepository:
     
     @staticmethod
     def delete(bot: Bot) -> None:
-        """Suppression logique d'un bot."""
-        bot.deleted = True
-        bot.deleted_at = datetime.utcnow()
+        """Désactive un bot (le retire de l'arène)."""
+        bot.is_active = False
+        bot.updated_at = datetime.utcnow()
         db.session.commit()
     
     @staticmethod
-    def create(user_id: int, name: str, description: str = None, 
-               game_type: str = 'pacman') -> Bot:
-        """Crée un nouveau bot."""
+    def create(user_id: int, name: str, referee_type: str = 'pacman', 
+               code: str = '') -> Bot:
+        """Crée un nouveau bot.
+        
+        Args:
+            user_id: ID de l'utilisateur
+            name: Nom du bot
+            referee_type: Type de referee (pacman, tictactoe, etc.)
+            code: Code initial (draft)
+        """
         bot = Bot(
             user_id=user_id,
             name=name,
-            description=description,
-            game_type=game_type
+            referee_type=referee_type,
+            code=code
         )
         db.session.add(bot)
         db.session.commit()
         return bot
     
     @staticmethod
-    def create_version(bot_id: int, code: str, version_number: int = None) -> BotVersion:
-        """Crée une nouvelle version d'un bot."""
+    def create_version(bot_id: int, code: str, version_number: int = None,
+                      version_name: str = None, description: str = '') -> BotVersion:
+        """Crée une nouvelle version d'un bot.
+        
+        Args:
+            bot_id: ID du bot
+            code: Code de la version
+            version_number: Numéro de version (auto-incrémenté si None)
+            version_name: Nom de la version (auto-généré si None)
+            description: Description de la version
+        """
         bot = Bot.query.get(bot_id)
         if not bot:
             raise ValueError(f"Bot {bot_id} not found")
@@ -73,12 +102,23 @@ class BotRepository:
                 .order_by(BotVersion.version_number.desc()).first()
             version_number = (last_version.version_number + 1) if last_version else 1
         
+        # Auto-generate version name if not provided
+        if not version_name:
+            owner_username = bot.owner.username if bot.owner else 'user'
+            version_name = f"{owner_username}_v{version_number}"
+        
         version = BotVersion(
             bot_id=bot_id,
             code=code,
-            version_number=version_number
+            version_number=version_number,
+            version_name=version_name,
+            description=description
         )
         db.session.add(version)
+        
+        # Update bot's latest_version_number
+        bot.latest_version_number = version_number
+        
         db.session.commit()
         return version
     

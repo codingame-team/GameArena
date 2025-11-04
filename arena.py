@@ -73,23 +73,26 @@ class ArenaManager:
         if not bot.code or len(bot.code.strip()) < 10:
             return None, "Bot code is too short to submit"
         
-        # Create new version
-        version = bot.submit_to_arena(
-            code=bot.code,
-            version_name=version_name,
-            description=description
-        )
+        # Use BotService instead of bot.submit_to_arena() (SOLID refactored)
+        from services.bot_service import BotService
+        from repositories.bot_repository import BotRepository
+        bot_service = BotService(BotRepository())
         
         try:
-            db.session.commit()
-            logger.info(f"Submitted bot '{bot.name}' (id={bot.id}) to Arena as version {version.version_number}: {version.version_name}")
+            version_dict = bot_service.submit_to_arena(
+                bot_id=bot_id,
+                version_name=version_name,
+                description=description,
+                user_id=user_id
+            )
+            
+            logger.info(f"Submitted bot '{bot.name}' (id={bot.id}) to Arena as version {version_dict['version_number']}: {version_dict['version_name']}")
             
             # Launch automatic placement matches
             self._schedule_placement_matches(bot.id)
             
-            return version.to_dict(include_code=True), None
+            return version_dict, None
         except Exception as e:
-            db.session.rollback()
             logger.exception("Error submitting bot to arena")
             return None, f"Error submitting bot to arena: {str(e)}"
     

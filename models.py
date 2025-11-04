@@ -95,42 +95,10 @@ class Bot(db.Model):
             result['code'] = self.code
         return result
     
-    def submit_to_arena(self, code=None, version_name=None, description=''):
-        """Submit bot code to Arena (creates a new BotVersion).
-        
-        This is different from just saving code in Playground.
-        Only Arena submissions create version records.
-        
-        Args:
-            code: Code to submit (defaults to current self.code)
-            version_name: Name for this version (auto-generated if None)
-            description: Optional description of changes
-        
-        Returns:
-            The created BotVersion object
-        """
-        code = code or self.code
-        self.latest_version_number += 1
-        
-        # Auto-generate version name if not provided
-        if not version_name:
-            version_name = f"{self.owner.username}_v{self.latest_version_number}"
-        
-        version = BotVersion(
-            bot_id=self.id,
-            version_number=self.latest_version_number,
-            version_name=version_name,
-            code=code,
-            description=description
-        )
-        db.session.add(version)
-        
-        # Mark bot as active in arena on any submission
-        if not self.is_active:
-            self.is_active = True
-        
-        self.updated_at = datetime.utcnow()
-        return version
+    # REMOVED: submit_to_arena() - Use BotService.submit_to_arena() instead
+    # This method violated SRP by mixing domain logic with persistence.
+    # All bot submissions should go through the service layer for proper
+    # validation, business logic, and SOLID compliance.
     
     def get_active_version(self):
         """Get the currently active version for Arena matches.

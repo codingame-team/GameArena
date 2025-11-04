@@ -1003,82 +1003,120 @@ def api_get_user_avatar_image(user_id):
 @app.route('/api/bots', methods=['GET'])
 @jwt_required(optional=True)
 def api_get_bots():
-    """Get bots - if authenticated, return user's bots; if 'all' param, return all active bots."""
-    # Check if requesting all bots (for opponent selection)
-    get_all = request.args.get('all', 'false').lower() == 'true'
+    """Get bots - if authenticated, return user's bots; if 'all' param, return all active bots.
     
-    if get_all:
-        # Return all active bots from all users for opponent selection
-        bots = arena_manager.get_all_active_bots()
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        # Check if requesting all bots (for opponent selection)
+        get_all = request.args.get('all', 'false').lower() == 'true'
+        
+        if get_all:
+            # Return all active bots from all users for opponent selection
+            bots = bot_service.get_all_active_bots()
+            return jsonify({'bots': bots}), 200
+        
+        # Return user's own bots (requires authentication)
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'Authentication required'}), 401
+        
+        bots = bot_service.get_user_bots(user.id, include_inactive=False)
         return jsonify({'bots': bots}), 200
-    
-    # Return user's own bots (requires authentication)
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'Authentication required'}), 401
-    
-    bots = arena_manager.get_user_bots(user.id)
-    return jsonify({'bots': bots}), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get bots')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots/my', methods=['GET'])
 @jwt_required()
 def api_get_my_bots():
-    """Get all bots owned by current user (including drafts and inactive)."""
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Get all bots owned by current user (including drafts and inactive).
     
-    # Return ALL user bots (including inactive ones for Playground)
-    bots = Bot.query.filter_by(user_id=user.id).all()
-    return jsonify([{
-        'id': b.id,
-        'name': b.name,
-        'code': b.code,
-        'latest_version_number': b.latest_version_number,
-        'elo': b.elo_rating,
-        'created_at': b.created_at.isoformat() if b.created_at else None
-    } for b in bots]), 200
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Return ALL user bots (including inactive ones for Playground)
+        bots = bot_service.get_user_bots(user.id, include_inactive=True)
+        return jsonify(bots), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get user bots')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots', methods=['POST'])
 @jwt_required()
 def api_create_bot():
-    """Create a new bot (Playground)."""
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Create a new bot (Playground).
     
-    data = request.get_json()
-    name = data.get('name')
-    code = data.get('code', '')
-    
-    bot_dict, error = arena_manager.create_bot(user.id, name, code)
-    if error:
-        return jsonify({'error': error}), 400
-    
-    return jsonify({'bot': bot_dict, 'message': 'Bot created successfully'}), 201
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        name = data.get('name')
+        code = data.get('code', '')
+        
+        # Délégation au service avec validation intégrée
+        bot_dict = bot_service.create_bot(
+            user_id=user.id,
+            name=name,
+            code=code
+        )
+        
+        return jsonify({'bot': bot_dict, 'message': 'Bot created successfully'}), 201
+        
+    except ValueError as e:
+        # Erreur de validation
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to create bot')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots/<int:bot_id>/save', methods=['PUT'])
 @jwt_required()
 def api_save_bot_code(bot_id):
-    """Save bot code (Playground only - does NOT create version)."""
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Save bot code (Playground only - does NOT create version).
     
-    data = request.get_json()
-    code = data.get('code')
-    
-    if not code:
-        return jsonify({'error': 'Code is required'}), 400
-    
-    bot_dict, error = arena_manager.save_bot_code(user.id, bot_id, code)
-    if error:
-        return jsonify({'error': error}), 400
-    
-    return jsonify({'bot': bot_dict, 'message': 'Bot code saved'}), 200
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        code = data.get('code')
+        
+        if code is None:  # Permet code vide mais pas None
+            return jsonify({'error': 'Code is required'}), 400
+        
+        # Délégation au service avec vérification propriété
+        bot_dict = bot_service.save_bot_code(
+            bot_id=bot_id,
+            code=code,
+            user_id=user.id
+        )
+        
+        return jsonify({'bot': bot_dict, 'message': 'Bot code saved'}), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except PermissionError as e:
+        return jsonify({'error': str(e)}), 403
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to save bot code')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 def _execute_arena_match(game_id, player_bot_id, opponent_bot_id):
@@ -1222,200 +1260,245 @@ def _execute_game_turn(game_entry, ref):
 @app.route('/api/bots/<int:bot_id>/submit-to-arena', methods=['POST'])
 @jwt_required()
 def api_submit_bot_to_arena(bot_id):
-    """Submit bot to Arena (creates BotVersion) and run placement matches."""
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Submit bot to Arena (creates BotVersion) and run placement matches.
     
-    data = request.get_json() or {}
-    version_name = data.get('version_name')
-    description = data.get('description', '')
+    API Layer: Validation et délégation au BotService (SOLID refactored).
     
-    version_dict, error = arena_manager.submit_bot_to_arena(
-        user.id, bot_id, version_name, description
-    )
-    if error:
-        return jsonify({'error': error}), 400
-    
-    # Run placement matches synchronously
-    # Get all other active arena bots
-    opponents = Bot.query.filter(
-        Bot.id != bot_id,
-        Bot.is_active == True,
-        Bot.latest_version_number > 0
-    ).all()
-    
-    placement_results = []
-    for opponent in opponents:
-        try:
-            # Create and run a match
-            game_id = str(uuid.uuid4())
-            match = arena_manager.create_match(bot_id, opponent.id, game_id)
-            if not match:
-                continue
-            
-            # Execute the game
-            result = _execute_arena_match(game_id, bot_id, opponent.id)
-            placement_results.append({
-                'opponent': opponent.name,
-                'result': result.get('winner') if result else 'error'
-            })
-        except Exception as e:
-            logging.getLogger(__name__).exception(f"Error in placement match vs {opponent.name}")
-    
-    return jsonify({
-        'version': version_dict,
-        'message': f"Bot submitted to Arena as version {version_dict['version_name']}",
-        'placement_matches': len(placement_results),
-        'results': placement_results
-    }), 201
+    TODO (dette technique): La logique des placement matches devrait être
+    dans un MatchService (SRP violation). Pour l'instant, conservée ici.
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json() or {}
+        version_name = data.get('version_name')
+        description = data.get('description', '')
+        
+        # Délégation création version au service
+        version_info = bot_service.submit_to_arena(
+            bot_id, 
+            version_name=version_name, 
+            description=description,
+            user_id=user.id
+        )
+        
+        # TODO: Refactoriser placement matches dans MatchService
+        # Run placement matches synchronously
+        # Get all other active arena bots
+        opponents = Bot.query.filter(
+            Bot.id != bot_id,
+            Bot.is_active == True,
+            Bot.latest_version_number > 0
+        ).all()
+        
+        placement_results = []
+        for opponent in opponents:
+            try:
+                # Create and run a match
+                game_id = str(uuid.uuid4())
+                match = arena_manager.create_match(bot_id, opponent.id, game_id)
+                if not match:
+                    continue
+                
+                # Execute the game
+                result = _execute_arena_match(game_id, bot_id, opponent.id)
+                placement_results.append({
+                    'opponent': opponent.name,
+                    'result': result.get('winner') if result else 'error'
+                })
+            except Exception as e:
+                logging.getLogger(__name__).exception(f"Error in placement match vs {opponent.name}")
+        
+        return jsonify({
+            'version': version_info,
+            'message': f"Bot submitted to Arena as version {version_info['version_name']}",
+            'placement_matches': len(placement_results),
+            'results': placement_results
+        }), 201
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except PermissionError as e:
+        return jsonify({'error': 'Unauthorized'}), 403
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to submit bot to arena')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots/<int:bot_id>', methods=['GET'])
 @jwt_required()
 def api_get_bot(bot_id):
-    """Get a specific bot."""
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Get a specific bot.
     
-    bot = arena_manager.get_bot(bot_id)
-    if not bot:
-        return jsonify({'error': 'Bot not found'}), 404
-    
-    # Include code only if user owns the bot
-    include_code = (bot['user_id'] == user.id)
-    if include_code:
-        bot = arena_manager.get_bot(bot_id, include_code=True)
-    
-    return jsonify({'bot': bot}), 200
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Délégation au service - vérifie propriété pour inclure code
+        bot_info = bot_service.get_bot_info(bot_id)
+        
+        if not bot_info:
+            return jsonify({'error': 'Bot not found'}), 404
+        
+        # Masquer le code si l'utilisateur n'est pas propriétaire
+        if bot_info['user_id'] != user.id:
+            bot_info.pop('code', None)
+        
+        return jsonify({'bot': bot_info}), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get bot')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots/<int:bot_id>/deactivate', methods=['POST'])
 @jwt_required()
 def api_deactivate_bot(bot_id):
-    """Deactivate a bot."""
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Deactivate a bot.
     
-    bot_dict, error = arena_manager.deactivate_bot(bot_id, user.id)
-    if error:
-        return jsonify({'error': error}), 403
-    
-    return jsonify({'bot': bot_dict, 'message': 'Bot deactivated'}), 200
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Délégation au service
+        bot_info = bot_service.deactivate_bot(bot_id, user_id=user.id)
+        
+        return jsonify({
+            'bot': bot_info, 
+            'message': 'Bot deactivated'
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except PermissionError as e:
+        return jsonify({'error': 'Unauthorized'}), 403
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to deactivate bot')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots/<int:bot_id>/versions', methods=['GET'])
 @jwt_required()
 def api_get_bot_versions(bot_id):
-    """Get all versions of a bot."""
-    from models import Bot, BotVersion
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Get all versions of a bot.
     
-    bot = Bot.query.get(bot_id)
-    if not bot:
-        return jsonify({'error': 'Bot not found'}), 404
-    
-    # Only bot owner can see versions
-    if bot.user_id != user.id:
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Délégation au service avec vérification propriété
+        versions = bot_service.get_bot_versions(bot_id, user_id=user.id)
+        
+        return jsonify({'versions': versions}), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except PermissionError as e:
         return jsonify({'error': 'Unauthorized'}), 403
-    
-    versions = BotVersion.query.filter_by(bot_id=bot_id).order_by(BotVersion.version_number.desc()).all()
-    return jsonify({'versions': [v.to_dict(include_code=True) for v in versions]}), 200
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get bot versions')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots/<int:bot_id>/versions/<int:version_number>', methods=['GET'])
 @jwt_required()
 def api_get_bot_version(bot_id, version_number):
-    """Get a specific version of a bot."""
-    from models import Bot, BotVersion
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Get a specific version of a bot.
     
-    bot = Bot.query.get(bot_id)
-    if not bot:
-        return jsonify({'error': 'Bot not found'}), 404
-    
-    # Only bot owner can see versions
-    if bot.user_id != user.id:
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Délégation au service
+        code = bot_service.get_bot_version_code(bot_id, version_number, user_id=user.id)
+        
+        return jsonify({
+            'version': {
+                'bot_id': bot_id,
+                'version_number': version_number,
+                'code': code
+            }
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except PermissionError as e:
         return jsonify({'error': 'Unauthorized'}), 403
-    
-    version = BotVersion.query.filter_by(bot_id=bot_id, version_number=version_number).first()
-    if not version:
-        return jsonify({'error': 'Version not found'}), 404
-    
-    return jsonify({'version': version.to_dict(include_code=True)}), 200
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get bot version')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots/<int:bot_id>/rollback/<int:version_number>', methods=['POST'])
 @jwt_required()
 def api_rollback_bot_version(bot_id, version_number):
-    """Rollback bot to a specific version."""
-    from models import Bot, BotVersion
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Rollback bot to a specific version.
     
-    bot = Bot.query.get(bot_id)
-    if not bot:
-        return jsonify({'error': 'Bot not found'}), 404
-    
-    # Only bot owner can rollback
-    if bot.user_id != user.id:
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Délégation au service
+        result = bot_service.rollback_to_version(bot_id, version_number, user_id=user.id)
+        
+        return jsonify({
+            'message': f'Rolled back to version {version_number}',
+            'version': result
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except PermissionError as e:
         return jsonify({'error': 'Unauthorized'}), 403
-    
-    # Get the target version
-    target_version = BotVersion.query.filter_by(bot_id=bot_id, version_number=version_number).first()
-    if not target_version:
-        return jsonify({'error': 'Version not found'}), 404
-    
-    # Create a new version with the old code
-    new_version = bot.create_version(target_version.code, f'Rollback to version {version_number}')
-    db.session.commit()
-    
-    return jsonify({
-        'bot': bot.to_dict(include_code=True),
-        'version': new_version.to_dict(include_code=True),
-        'message': f'Rolled back to version {version_number}'
-    }), 200
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to rollback bot')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/bots/<int:bot_id>/load-version/<int:version_number>', methods=['POST'])
 @jwt_required()
 def api_load_bot_version_to_playground(bot_id, version_number):
-    """Load a specific version into Playground (updates bot.code without creating new version)."""
-    from models import Bot, BotVersion
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    """Load a specific version into Playground (updates bot.code without creating new version).
     
-    bot = Bot.query.get(bot_id)
-    if not bot:
-        return jsonify({'error': 'Bot not found'}), 404
-    
-    # Only bot owner can load versions
-    if bot.user_id != user.id:
+    API Layer: Validation et délégation au BotService (SOLID refactored).
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Délégation au service
+        result = bot_service.load_version_to_draft(bot_id, version_number, user_id=user.id)
+        
+        return jsonify({
+            'bot': result,
+            'message': f'Version {version_number} loaded into Playground'
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except PermissionError as e:
         return jsonify({'error': 'Unauthorized'}), 403
-    
-    # Get the target version
-    target_version = BotVersion.query.filter_by(bot_id=bot_id, version_number=version_number).first()
-    if not target_version:
-        return jsonify({'error': 'Version not found'}), 404
-    
-    # Update bot's current code (Playground draft)
-    bot.code = target_version.code
-    bot.updated_at = dt.datetime.utcnow()
-    db.session.commit()
-    
-    return jsonify({
-        'bot': bot.to_dict(include_code=True),
-        'message': f'Version {version_number} loaded into Playground',
-        'version_loaded': target_version.to_dict(include_code=False)
-    }), 200
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to load bot version')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/arena/challenge', methods=['POST'])
