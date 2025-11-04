@@ -14,14 +14,19 @@ export default function MonacoEditor({value, onChange, language='python', theme=
   
   // make the editor fill its container; parent should provide sizing (flex/minHeight)
   return (
-    <div style={{display: 'flex', flex: 1, minHeight: 0, border: '1px solid #ddd'}}>
+    <div style={{
+      flex: 1, 
+      minHeight: 0, 
+      border: '1px solid #ddd',
+      height: '100%',
+      position: 'relative'
+    }}>
       <Editor
         height="100%"
         theme={monacoTheme}
-        defaultLanguage={language}
-        defaultValue={value}
+        language={language}
         value={value}
-        onChange={(v)=> onChange(v)}
+        onChange={(v)=> onChange && onChange(v)}
         options={editorOptions}
       />
     </div>

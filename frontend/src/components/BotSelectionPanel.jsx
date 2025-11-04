@@ -120,7 +120,11 @@ function PlayerAvatar({
           src={avatarUrl}
           alt={playerName}
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          onError={(e) => { e.target.src = '/avatars/no_avatar.svg' }}
+          onError={(e) => { 
+            console.warn('❌ Avatar load failed for', playerName, '- URL:', avatarUrl)
+            e.target.src = '/avatars/no_avatar.svg' 
+          }}
+          onLoad={() => console.log('✅ Avatar loaded for', playerName, '- URL:', avatarUrl)}
         />
       </div>
       
