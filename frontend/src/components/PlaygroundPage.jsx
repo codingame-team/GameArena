@@ -5,6 +5,8 @@ import BotStderrPanel from './BotStderrPanel'
 import EditorPanel from './EditorPanel'
 import GameControlsPanel from './GameControlsPanel'
 import SubmitArenaModal from './SubmitArenaModal'
+import LeagueBadge from './LeagueBadge'
+import LeagueRules from './LeagueRules'
 
 // Hooks
 import { useTheme } from '../hooks/useTheme'
@@ -13,6 +15,7 @@ import { useStatus } from '../hooks/useStatus'
 import { useBotManagement } from '../hooks/useBotManagement'
 import { useBotSelection } from '../hooks/useBotSelection'
 import { useGamePlayback } from '../hooks/useGamePlayback'
+import useLeague from '../hooks/useLeague'
 
 /**
  * Page Playground - Interface principale de développement et test de bots.
@@ -51,6 +54,14 @@ export default function PlaygroundPage() {
     endDrag
   } = usePanelLayout()
   const { backendStatus, dockerStatus, checkAll: checkStatus } = useStatus(false)
+  const { userLeague: leagueInfo, loading: leagueLoading, fetchUserLeague } = useLeague()
+  
+  // Charger les infos de ligue au mount
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchUserLeague()
+    }
+  }, [isAuthenticated, fetchUserLeague])
   
   const {
     code,
@@ -145,7 +156,7 @@ export default function PlaygroundPage() {
     }
     
     const payload = {
-      referee: 'pacman',
+      referee: 'pacman_v2',  // Utiliser v2 qui supporte les ligues
       bot1: bot1Value,
       bot2: bot2Value,
       mode: 'bot-vs-bot'
@@ -276,7 +287,21 @@ export default function PlaygroundPage() {
         padding: '0 20px', 
         paddingTop: '10px' 
       }}>
-        <span>GameArena - React Prototype</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <span>GameArena - React Prototype</span>
+          {!leagueLoading && leagueInfo && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <LeagueBadge 
+                leagueName={leagueInfo.current_league}
+                size="small"
+                showName={true}
+              />
+              <span style={{ fontSize: '14px', color: '#888' }}>
+                {leagueInfo.elo} ELO ({leagueInfo.progress_percent}%)
+              </span>
+            </div>
+          )}
+        </div>
         <Link 
           to="/arena" 
           style={{ 
@@ -404,6 +429,11 @@ export default function PlaygroundPage() {
             gap: '12px'
           }}
         >
+          {/* League Rules - Affichage des règles de la ligue */}
+          {!leagueLoading && leagueInfo && (
+            <LeagueRules leagueInfo={leagueInfo} compact={true} />
+          )}
+
           {/* Editor Panel - flex 1 pour prendre tout l'espace */}
           <EditorPanel
             code={code}

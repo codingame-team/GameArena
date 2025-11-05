@@ -62,36 +62,54 @@ export function useBotSelection() {
 
   /**
    * Charge la liste des bots actifs depuis l'API
+   * Filtre par ligue : uniquement les bots de la même ligue + le Boss de la ligue
    */
   const loadAvailableBots = useCallback(async () => {
     try {
       const token = localStorage.getItem('token')
       if (!token) return
 
-      // Charger TOUS les bots de l'arène (avec ?all=true)
-      const res = await axios.get(`${API_BASE_URL}/api/bots?all=true`, {
+      // Charger les bots filtrés par ligue courante
+      const res = await axios.get(`${API_BASE_URL}/api/bots/by-league`, {
         headers: { Authorization: `Bearer ${token}` }
       })
       
-      // L'API retourne { bots: [...] }
-      const botsList = res.data.bots || res.data
-      console.log('📋 Loaded bots:', botsList.length, 'bots')
-      if (botsList && Array.isArray(botsList)) {
-        setAvailableBots(botsList)
-        
-        // Charger les avatars custom des propriétaires
-        await loadBotOwnerAvatars(botsList)
-        
-        // Auto-sélectionner le premier bot de l'utilisateur comme Player 1
-        const userBotsRes = await axios.get(`${API_BASE_URL}/api/bots/my`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        
-        if (userBotsRes.data && userBotsRes.data.length > 0) {
-          const userBot = userBotsRes.data[0]
-          setSelectedPlayer1(`bot:${userBot.id}`)
-          console.log('✅ Auto-selected user bot as Player 1:', userBot.id)
-        }
+      console.log('📋 Loaded bots by league:', res.data)
+      
+      // L'API retourne { bots: [...], boss: {...}, user_league: "Bronze", user_elo: 1274 }
+      const botsList = res.data.bots || []
+      const boss = res.data.boss
+      
+      // Ajouter le Boss à la liste si présent
+      if (boss) {
+        console.log('👑 Boss data:', boss)
+        botsList.push(boss)
+      } else {
+        console.warn('⚠️ No Boss found in API response')
+      }
+      
+      console.log(`📋 Loaded ${botsList.length} bots from ${res.data.user_league} league`)
+      console.log('📋 First 3 bots:', botsList.slice(0, 3).map(b => ({id: b.id, name: b.name, is_boss: b.is_boss})))
+      setAvailableBots(botsList)
+      
+      // Charger les avatars custom des propriétaires
+      await loadBotOwnerAvatars(botsList)
+      
+      // Auto-sélectionner le premier bot de l'utilisateur comme Player 1
+      const userBotsRes = await axios.get(`${API_BASE_URL}/api/bots/my`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      
+      if (userBotsRes.data && userBotsRes.data.length > 0) {
+        const userBot = userBotsRes.data[0]
+        setSelectedPlayer1(`bot:${userBot.id}`)
+        console.log('✅ Auto-selected user bot as Player 1:', userBot.id)
+      }
+      
+      // Auto-sélectionner le Boss comme Player 2 si disponible
+      if (boss) {
+        setSelectedPlayer2(`bot:${boss.id}`)
+        console.log('✅ Auto-selected Boss as Player 2:', boss.name)
       }
     } catch (e) {
       console.error('Failed to load available bots:', e)
@@ -149,6 +167,13 @@ export function useBotSelection() {
     if (typeof playerSelection === 'string' && playerSelection.startsWith('bot:')) {
       const selectedBotId = parseInt(playerSelection.substring(4))
       const bot = availableBots.find(b => b.id === selectedBotId)
+      
+      // Pour les Boss, utiliser le nom du bot directement (ex: "Bronze Boss")
+      if (bot?.is_boss) {
+        return bot.name
+      }
+      
+      // Pour les bots normaux, utiliser le nom du propriétaire
       return bot?.owner_username || bot?.name || `Bot #${selectedBotId}`
     }
     return playerSelection || 'Aucun joueur'
@@ -171,7 +196,14 @@ export function useBotSelection() {
       const selectedBotId = parseInt(playerSelection.substring(4))
       
       const bot = availableBots.find(b => b.id === selectedBotId)
-      console.log('   - bot found:', bot?.id, 'user_id:', bot?.user_id)
+      console.log('   - bot found:', bot?.id, 'user_id:', bot?.user_id, 'is_boss:', bot?.is_boss)
+      
+      // Si c'est un Boss, utiliser son avatar spécifique
+      if (bot && bot.is_boss) {
+        const bossAvatar = bot.avatar || 'boss'
+        console.log('✅ Using Boss avatar:', bossAvatar)
+        return `/avatars/${bossAvatar}.svg`
+      }
       
       // Si c'est le bot de l'utilisateur courant et qu'on a un avatar custom
       if (bot && currentUser && bot.user_id === currentUser.id && customAvatarBlobUrl) {

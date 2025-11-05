@@ -20,6 +20,7 @@ from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
 from models import db, User, Bot, Match
 from auth import register_user, login_user, get_current_user
 from arena import ArenaManager
+from boss_system import BossSystem
 import uuid
 import subprocess
 import logging
@@ -92,8 +93,14 @@ GAMES_INDEX_PATH = os.path.join(PERSISTENT_BOTS_DIR, 'games_index.json')
 
 # In-memory games store (legacy, sera progressivement remplacé par GameService)
 GAMES = {}
+
+# Import du nouveau referee v2
+from referees.pacman_referee_v2 import PacmanRefereeV2
+
 REFEREES = {
-    'pacman': PacmanReferee
+    'pacman': PacmanRefereeV2,  # V2 est maintenant le referee par défaut (support ligues)
+    'pacman_v1': PacmanReferee,  # Ancien referee gardé pour rétrocompatibilité
+    'pacman_v2': PacmanRefereeV2  # Alias explicite
 }
 
 # -------------------- Service Layer Initialization (DIP) --------------------
@@ -173,9 +180,12 @@ def run_bot_python(bot_code: str, input_str: str, timeout_ms: int = 50):
 
 
 # Validate action text
-ACTION_RE = re.compile(r'^(MOVE\s+-?\d+\s+-?\d+(?:\s+-?\d+)?)$', re.IGNORECASE)
+# V1: Une seule commande MOVE
+ACTION_RE_V1 = re.compile(r'^(MOVE\s+-?\d+\s+-?\d+(?:\s+-?\d+)?)$', re.IGNORECASE)
+# V2: Multiples commandes séparées par |
+ACTION_RE_V2 = re.compile(r'^((MOVE|SPEED|SWITCH)\s+[^|]+)(\s*\|\s*(MOVE|SPEED|SWITCH)\s+[^|]+)*$', re.IGNORECASE)
 
-def validate_action_format(raw_output: str, normalized_action: str):
+def validate_action_format(raw_output: str, normalized_action: str, allow_multi_commands: bool = False):
     # Check if bot produced no output
     if not raw_output or not raw_output.strip():
         return normalized_action, 'no output from bot'
@@ -186,8 +196,17 @@ def validate_action_format(raw_output: str, normalized_action: str):
             break
     if not first_line:
         return normalized_action, 'no valid output from bot'
-    if ACTION_RE.match(first_line):
-        return normalized_action, ''
+    
+    # Vérifier selon le format attendu
+    if allow_multi_commands:
+        # V2: accepter plusieurs commandes
+        if ACTION_RE_V2.match(first_line) or ACTION_RE_V1.match(first_line):
+            return normalized_action, ''
+    else:
+        # V1: une seule commande
+        if ACTION_RE_V1.match(first_line):
+            return normalized_action, ''
+    
     return normalized_action, f'invalid action format: "{first_line}"'
 
 
@@ -368,7 +387,9 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
                     logging.getLogger(__name__).info('game %s role=%s: parsed execution failed/timeout (path=%s) runner=%s', game.get('id'), role, bot_path, runner_used)
                     return 'STAY', {'stdout': out or '', 'stderr': err or 'timeout', 'rc': rc, 'runner': runner_used, 'parsed': True, 'path': bot_path}
                 action = ref.parse_bot_output(role, out)
-                action, fmt_err = validate_action_format(out, action)
+                # V2 referee accepte plusieurs commandes
+                allow_multi = ref.__class__.__name__ == 'PacmanRefereeV2'
+                action, fmt_err = validate_action_format(out, action, allow_multi_commands=allow_multi)
                 # Treat invalid actions as fatal errors
                 if fmt_err:
                     try:
@@ -405,7 +426,9 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
             logging.getLogger(__name__).info('game %s role=%s: runner execution failed (path=%s) runner=%s err=%s', game.get('id'), role, bot_path, runner_used, err)
             return 'STAY', {'stdout': out or '', 'stderr': err or 'timeout', 'rc': rc, 'runner': runner_used, 'path': bot_path}
         action = ref.parse_bot_output(role, out)
-        action, fmt_err = validate_action_format(out, action)
+        # V2 referee accepte plusieurs commandes
+        allow_multi = ref.__class__.__name__ == 'PacmanRefereeV2'
+        action, fmt_err = validate_action_format(out, action, allow_multi_commands=allow_multi)
         # Treat invalid actions as fatal errors
         if fmt_err:
             try:
@@ -490,6 +513,7 @@ def get_player_template():
 
 
 @app.route('/api/games', methods=['POST'])
+@jwt_required(optional=True)
 def create_game():
     """Crée une nouvelle partie.
     
@@ -499,9 +523,19 @@ def create_game():
     body = request.json or {}
     
     # Extraction et validation des paramètres
-    referee_name = body.get('referee', 'pacman')
+    referee_name = body.get('referee', 'pacman_v2')  # Utiliser v2 par défaut (support des ligues)
     mode = body.get('mode', 'player-vs-bot')
     bot_runner = body.get('bot_runner')
+    
+    # Récupérer la ligue de l'utilisateur courant
+    user_league = None
+    try:
+        user = get_current_user()
+        if user:
+            user_league = user.league
+            logging.getLogger(__name__).info(f"Creating game for user {user.username} in league {user_league}")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Could not get user league: {e}")
     
     try:
         # Délégation à la couche service (SRP + DIP)
@@ -511,7 +545,8 @@ def create_game():
                 mode='bot-vs-bot',
                 bot1=body.get('bot1', 'Boss'),
                 bot2=body.get('bot2', 'Boss'),
-                bot_runner=bot_runner
+                bot_runner=bot_runner,
+                user_league=user_league
             )
         else:
             result = game_service.create_game(
@@ -520,7 +555,8 @@ def create_game():
                 player_code=body.get('player_code'),
                 opponent=body.get('opponent', 'Boss'),
                 player_bot_id=body.get('player_bot_id'),
-                bot_runner=bot_runner
+                bot_runner=bot_runner,
+                user_league=user_league
             )
         
         # Sync avec le store legacy (transition progressive)
@@ -998,6 +1034,123 @@ def api_get_user_avatar_image(user_id):
     return jsonify({'error': 'Avatar file not found'}), 404
 
 
+# ==================== LEAGUE ENDPOINTS ====================
+
+@app.route('/api/leagues', methods=['GET'])
+def api_get_leagues():
+    """Get all available leagues with their rules."""
+    from leagues import League, LeagueRules
+    
+    leagues = []
+    for league in [League.WOOD, League.BRONZE, League.SILVER, League.GOLD]:
+        rules = LeagueRules(league)
+        leagues.append({
+            'name': league.to_name(),
+            'index': int(league),
+            'rules': rules.to_dict()
+        })
+    
+    return jsonify({'leagues': leagues}), 200
+
+
+@app.route('/api/user/league', methods=['GET'])
+@jwt_required()
+def api_get_user_league():
+    """Get current user's league information."""
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    league_info = user.get_league_info()
+    return jsonify(league_info), 200
+
+
+@app.route('/api/leaderboard', methods=['GET'])
+@jwt_required(optional=True)
+def api_get_leaderboard():
+    """Get leaderboard with league information.
+    
+    Query params:
+    - league: Filter by league name (wood, bronze, silver, gold)
+    - limit: Number of results (default 100)
+    """
+    from leagues import League, LeagueManager
+    
+    league_filter = request.args.get('league', '').lower()
+    limit = int(request.args.get('limit', 100))
+    
+    # Construire la query
+    query = User.query
+    
+    # Filtrer par ligue si spécifié
+    if league_filter:
+        try:
+            league = League.from_name(league_filter)
+            min_elo = LeagueManager.ELO_THRESHOLDS[league]
+            
+            if league == League.GOLD:
+                query = query.filter(User.elo_rating >= min_elo)
+            else:
+                next_league = League(league + 1)
+                max_elo = LeagueManager.ELO_THRESHOLDS[next_league]
+                query = query.filter(User.elo_rating >= min_elo, User.elo_rating < max_elo)
+        except:
+            pass
+    
+    # Trier par ELO
+    users = query.order_by(User.elo_rating.desc()).limit(limit).all()
+    
+    # Récupérer tous les Boss
+    from boss_system import BossSystem
+    all_bosses = []
+    for league in League:
+        boss_bot = BossSystem.get_boss_for_league(league)
+        if boss_bot:
+            all_bosses.append({
+                'id': boss_bot.id,
+                'name': boss_bot.name,
+                'elo': boss_bot.elo_rating,
+                'league': league.name,
+                'league_index': league.value,
+                'avatar': boss_bot.avatar or 'boss',
+                'is_boss': True
+            })
+    
+    # Fusionner users et Boss, puis trier par ELO
+    all_entries = []
+    
+    # Ajouter les utilisateurs
+    for user in users:
+        league_info = user.get_league_info()
+        all_entries.append({
+            'username': user.username,
+            'elo': user.elo_rating,
+            'league': league_info['current_league'],
+            'league_index': league_info['current_league_index'],
+            'avatar': user.avatar or 'my_bot',
+            'is_boss': False
+        })
+    
+    # Ajouter les Boss (en filtrant par ligue si nécessaire)
+    for boss in all_bosses:
+        if league_filter:
+            # Ne garder que le Boss de la ligue filtrée
+            if boss['league'].lower() != league_filter:
+                continue
+        all_entries.append(boss)
+    
+    # Trier par ELO décroissant
+    all_entries.sort(key=lambda x: x['elo'], reverse=True)
+    
+    # Limiter et ajouter les rangs
+    leaderboard = []
+    for rank, entry in enumerate(all_entries[:limit], 1):
+        entry['rank'] = rank
+        leaderboard.append(entry)
+    
+    return jsonify({'leaderboard': leaderboard}), 200
+
+
 # ==================== BOT/ARENA ENDPOINTS ====================
 
 @app.route('/api/bots', methods=['GET'])
@@ -1048,6 +1201,103 @@ def api_get_my_bots():
     except Exception as e:
         logging.getLogger(__name__).exception('Failed to get user bots')
         return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/bots/by-league', methods=['GET'])
+@jwt_required()
+def api_get_bots_by_league():
+    """Get bots filtered by user's current league + Boss of that league.
+    
+    Returns bots from:
+    - Same league as current user
+    - Boss of current league (for challenges)
+    
+    Response:
+    {
+        "bots": [...],  # Bots de la ligue
+        "boss": {...},  # Boss de la ligue (si existe)
+        "user_league": "Bronze",
+        "user_elo": 1274
+    }
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        from leagues import League, LeagueManager
+        from boss_system import BossSystem
+        
+        # Récupérer la ligue de l'utilisateur
+        user_league = League(user.league)
+        league_info = LeagueManager.get_league_info(user.elo_rating)
+        
+        # Récupérer le Boss de la ligue d'abord
+        boss = BossSystem.get_boss_for_league(user_league)
+        
+        # Récupérer tous les IDs des Boss pour les exclure de la liste des bots
+        all_boss_ids = set()
+        for league in League:
+            league_boss = BossSystem.get_boss_for_league(league)
+            if league_boss:
+                all_boss_ids.add(league_boss.id)
+        
+        # Récupérer tous les bots actifs
+        all_bots = Bot.query.filter_by(is_active=True).all()
+        
+        # Filtrer par ligue (en excluant TOUS les Boss qui seront gérés séparément)
+        league_bots = []
+        for bot in all_bots:
+            # Sauter tous les Boss, seul le Boss de la ligue courante sera retourné dans boss_data
+            if bot.id in all_boss_ids:
+                continue
+                
+            # Récupérer l'owner pour avoir son ELO
+            owner = User.query.get(bot.user_id)
+            if owner:
+                bot_league = LeagueManager.get_league_from_elo(owner.elo_rating)
+                if bot_league == user_league:
+                    league_bots.append({
+                        'id': bot.id,
+                        'name': bot.name,
+                        'user_id': bot.user_id,
+                        'owner_username': owner.username,
+                        'owner_avatar': owner.avatar or 'my_bot',
+                        'elo_rating': bot.elo_rating,
+                        'match_count': bot.match_count,
+                        'win_count': bot.win_count,
+                        'avatar': bot.avatar or owner.avatar or 'my_bot',
+                        'is_boss': False
+                    })
+        
+        # Construire les données du Boss
+        boss_data = None
+        if boss:
+            boss_owner = User.query.get(boss.user_id)
+            boss_data = {
+                'id': boss.id,
+                'name': boss.name,
+                'user_id': boss.user_id,
+                'owner_username': boss_owner.username if boss_owner else 'System',
+                'owner_avatar': boss.avatar or 'boss',
+                'elo_rating': boss.elo_rating,
+                'match_count': boss.match_count,
+                'win_count': boss.win_count,
+                'avatar': boss.avatar or 'boss',
+                'is_boss': True
+            }
+        
+        return jsonify({
+            'bots': league_bots,
+            'boss': boss_data,
+            'user_league': league_info['current_league'],
+            'user_league_index': user_league.value,
+            'user_elo': user.elo_rating
+        }), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get bots by league')
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/bots', methods=['POST'])
@@ -1286,12 +1536,19 @@ def api_submit_bot_to_arena(bot_id):
         
         # TODO: Refactoriser placement matches dans MatchService
         # Run placement matches synchronously
-        # Get all other active arena bots
-        opponents = Bot.query.filter(
+        # Get up to 20 other active arena bots for placement matches
+        # Select randomly to ensure variety and fairness
+        import random
+        
+        all_opponents = Bot.query.filter(
             Bot.id != bot_id,
             Bot.is_active == True,
             Bot.latest_version_number > 0
         ).all()
+        
+        # Limit to 20 matches maximum
+        num_matches = min(20, len(all_opponents))
+        opponents = random.sample(all_opponents, num_matches) if all_opponents else []
         
         placement_results = []
         for opponent in opponents:
@@ -1313,8 +1570,9 @@ def api_submit_bot_to_arena(bot_id):
         
         return jsonify({
             'version': version_info,
-            'message': f"Bot submitted to Arena as version {version_info['version_name']}",
+            'message': f"Bot submitted to Arena as version {version_info['version_name']}. Played {len(placement_results)} placement matches.",
             'placement_matches': len(placement_results),
+            'max_matches': 20,
             'results': placement_results
         }), 201
         
@@ -1569,10 +1827,51 @@ def api_challenge_bot():
 
 
 @app.route('/api/arena/leaderboard', methods=['GET'])
-def api_get_leaderboard():
-    """Get the leaderboard (public endpoint)."""
-    limit = request.args.get('limit', 50, type=int)
-    leaderboard = arena_manager.get_leaderboard(limit=min(limit, 100))
+def api_get_arena_leaderboard():
+    """Get the arena leaderboard (legacy endpoint, redirects to new leaderboard).
+    
+    This endpoint is kept for backward compatibility but uses the new league-aware leaderboard.
+    """
+    # Redirect to the new leaderboard endpoint logic
+    from leagues import League, LeagueManager
+    
+    league_filter = request.args.get('league', '').lower()
+    limit = int(request.args.get('limit', 100))
+    
+    # Construire la query
+    query = User.query
+    
+    # Filtrer par ligue si spécifié
+    if league_filter:
+        try:
+            league = League.from_name(league_filter)
+            min_elo = LeagueManager.ELO_THRESHOLDS[league]
+            
+            if league == League.GOLD:
+                query = query.filter(User.elo_rating >= min_elo)
+            else:
+                next_league = League(league + 1)
+                max_elo = LeagueManager.ELO_THRESHOLDS[next_league]
+                query = query.filter(User.elo_rating >= min_elo, User.elo_rating < max_elo)
+        except:
+            pass
+    
+    # Trier par ELO
+    users = query.order_by(User.elo_rating.desc()).limit(limit).all()
+    
+    # Formater les résultats
+    leaderboard = []
+    for rank, user in enumerate(users, 1):
+        league_info = user.get_league_info()
+        leaderboard.append({
+            'rank': rank,
+            'username': user.username,
+            'elo': user.elo_rating,
+            'league': league_info['current_league'],
+            'league_index': league_info['current_league_index'],
+            'avatar': user.avatar or 'my_bot'
+        })
+    
     return jsonify({'leaderboard': leaderboard}), 200
 
 
@@ -1597,6 +1896,159 @@ def api_get_match(match_id):
         return jsonify({'error': 'Match not found'}), 404
     
     return jsonify({'match': match.to_dict()}), 200
+
+
+@app.route('/api/arena/boss/info', methods=['GET'])
+@jwt_required()
+def api_get_boss_info():
+    """Get information about the next Boss to challenge.
+    
+    Returns:
+        - can_challenge: bool, si le joueur peut défier
+        - message: str, explication
+        - boss: dict, informations sur le Boss (si disponible)
+        - required_elo: int, ELO requis pour défier
+        - current_elo: int, ELO actuel du joueur
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        can_challenge, message, boss = BossSystem.can_challenge_boss(user)
+        
+        response = {
+            'can_challenge': can_challenge,
+            'message': message,
+            'current_elo': user.elo_rating,
+            'current_league': user.league,
+            'current_league_name': user.get_league_info()['name']
+        }
+        
+        if boss:
+            boss_config = BossSystem.BOSS_CONFIG.get(user.get_league_info()['league_obj'])
+            response['boss'] = {
+                'id': boss.id,
+                'name': boss.name,
+                'elo': boss.elo_rating,
+                'description': boss_config['description'] if boss_config else '',
+                'wins': boss.win_count,
+                'matches': boss.match_count
+            }
+            response['required_elo'] = boss.elo_rating
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get boss info')
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/arena/boss/challenge', methods=['POST'])
+@jwt_required()
+def api_challenge_boss():
+    """Challenge the Boss of current league.
+    
+    Creates a match against the Boss using league-specific rules.
+    The match is executed immediately and the result determines promotion.
+    
+    Returns:
+        - success: bool
+        - promoted: bool, si promu après victoire
+        - match_result: dict avec détails du match
+        - message: str
+    """
+    try:
+        user = get_current_user()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Vérifier si peut défier
+        can_challenge, msg, boss = BossSystem.can_challenge_boss(user)
+        if not can_challenge:
+            return jsonify({'error': msg}), 400
+        
+        # Récupérer le bot du joueur (dernier soumis à l'arène)
+        player_bot = Bot.query.filter_by(
+            user_id=user.id,
+            is_active=True
+        ).order_by(Bot.latest_version_number.desc()).first()
+        
+        if not player_bot:
+            return jsonify({'error': 'Vous devez avoir un bot actif pour défier le Boss'}), 400
+        
+        # Créer et exécuter le match contre le Boss
+        game_id = str(uuid.uuid4())
+        
+        # Utiliser les règles spécifiques à la ligue
+        from leagues import get_league_rules, League
+        current_league = League.from_index(user.league)
+        league_rules = get_league_rules(current_league)
+        
+        logging.getLogger(__name__).info(
+            f"🏆 User {user.username} challenges {boss.name} with league rules: {league_rules.to_dict()}"
+        )
+        
+        # Exécuter le match (synchrone)
+        result = _execute_arena_match(game_id, player_bot.id, boss.id)
+        
+        if 'error' in result:
+            return jsonify({'error': result['error']}), 500
+        
+        # Vérifier si victoire
+        beat_boss = result['winner'] == 'player'
+        
+        # Appliquer promotion si victoire
+        promoted, promo_msg = BossSystem.check_promotion_after_boss_match(user, beat_boss)
+        
+        response = {
+            'success': True,
+            'beat_boss': beat_boss,
+            'promoted': promoted,
+            'match_result': result,
+            'message': promo_msg if promoted else (
+                "💪 Victoire contre le Boss ! Mais vous êtes déjà promu." if beat_boss 
+                else "😔 Défaite... Continuez à vous entraîner et réessayez !"
+            ),
+            'new_league': user.league,
+            'new_elo': user.elo_rating
+        }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to challenge boss')
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/arena/boss/all', methods=['GET'])
+def api_get_all_bosses():
+    """Get information about all Bosses (public endpoint)."""
+    try:
+        from leagues import League
+        
+        bosses = []
+        for league in [League.WOOD, League.BRONZE, League.SILVER, League.GOLD]:
+            boss = BossSystem.get_boss_for_league(league)
+            config = BossSystem.BOSS_CONFIG.get(league)
+            
+            if boss and config:
+                bosses.append({
+                    'league': league.to_name(),
+                    'league_index': int(league),
+                    'name': boss.name,
+                    'elo': boss.elo_rating,
+                    'description': config['description'],
+                    'wins': boss.win_count,
+                    'matches': boss.match_count,
+                    'win_rate': round(boss.win_count / boss.match_count * 100, 1) if boss.match_count > 0 else 0
+                })
+        
+        return jsonify({'bosses': bosses}), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to get all bosses')
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 # Modify the existing step endpoint to complete arena matches

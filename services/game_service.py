@@ -46,7 +46,7 @@ class GameService:
     def create_game(self, referee_name: str, mode: str = 'player-vs-bot',
                    player_code: str = None, opponent: str = 'Boss',
                    player_bot_id: int = None, bot1: str = None, bot2: str = None,
-                   bot_runner: str = None) -> Dict[str, Any]:
+                   bot_runner: str = None, user_league: int = None) -> Dict[str, Any]:
         """Crée une nouvelle partie.
         
         Args:
@@ -58,6 +58,7 @@ class GameService:
             bot1: Premier bot (mode bot-vs-bot)
             bot2: Second bot (mode bot-vs-bot)
             bot_runner: Type de runner ('auto', 'docker', 'subprocess')
+            user_league: Index de la ligue de l'utilisateur (1-4)
             
         Returns:
             Dictionnaire avec game_id et infos
@@ -70,9 +71,21 @@ class GameService:
         if not referee_class:
             raise ValueError(f"Unknown referee: {referee_name}")
         
+        # Récupération des règles de ligue
+        init_params = {}
+        if user_league is not None:
+            from leagues import League, LeagueRules
+            try:
+                league = League(user_league)
+                rules = LeagueRules(league)
+                init_params = rules.get_init_params()
+                self.logger.info(f"Creating game with {league.name} league rules: {init_params}")
+            except Exception as e:
+                self.logger.warning(f"Failed to load league rules: {e}")
+        
         # Création du referee
         ref: Referee = referee_class()
-        ref.init_game({})
+        ref.init_game(init_params)
         
         # Génération ID unique
         game_id = str(uuid.uuid4())

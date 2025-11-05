@@ -1,0 +1,16 @@
+<svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="64" cy="64" r="60" fill="#8b0000" stroke="#660000" stroke-width="2"/>
+  <!-- Helmet/Hair -->
+  <ellipse cx="64" cy="50" rx="28" ry="22" fill="#a0522d"/>
+  <!-- Face -->
+  <ellipse cx="64" cy="65" rx="24" ry="20" fill="#d2691e"/>
+  <!-- Eyes (fierce) -->
+  <line x1="54" y1="62" x2="60" y2="64" stroke="#000000" stroke-width="3"/>
+  <line x1="68" y1="64" x2="74" y1="62" stroke="#000000" stroke-width="3"/>
+  <!-- War paint -->
+  <line x1="48" y1="70" x2="80" y2="70" stroke="#ff0000" stroke-width="2"/>
+  <!-- Shoulder armor -->
+  <rect x="40" y="85" width="48" height="16" rx="4" fill="#8b4513"/>
+  <circle cx="52" cy="93" r="4" fill="#ffd700"/>
+  <circle cx="76" cy="93" r="4" fill="#ffd700"/>
+</svg>

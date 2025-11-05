@@ -3,24 +3,56 @@ import React from 'react'
 import PacmanSprite from './PacmanSprite'
 
 function Grid({state, prevState, winnerMessage}){
-  const width = 7
-  const height = 5
+  const width = state?.grid?.[0]?.length || 7
+  const height = state?.grid?.length || 5
   const pellets = state ? state.pellets || [] : []
-  const pacs = state ? state.pacs || {} : {}
-  const prevPacs = prevState ? prevState.pacs || {} : {}
+  
+  // Gérer les deux formats de pacs (ancien: dict, nouveau: array)
+  let pacsArray = []
+  if (state?.pacs) {
+    if (Array.isArray(state.pacs)) {
+      // Nouveau format v2: array d'objets {id, owner, position: [x,y], ...}
+      pacsArray = state.pacs
+    } else {
+      // Ancien format v1: {player: [x,y], opponent: [x,y]}
+      pacsArray = Object.entries(state.pacs).map(([owner, pos]) => ({
+        id: owner,
+        owner: owner,
+        position: pos
+      }))
+    }
+  }
+  
+  let prevPacsArray = []
+  if (prevState?.pacs) {
+    if (Array.isArray(prevState.pacs)) {
+      prevPacsArray = prevState.pacs
+    } else {
+      prevPacsArray = Object.entries(prevState.pacs).map(([owner, pos]) => ({
+        id: owner,
+        owner: owner,
+        position: pos
+      }))
+    }
+  }
+  
   const pelletSet = new Set((pellets || []).map(p=>p[0]+','+p[1]))
 
   // Calculer les directions en fonction des positions précédentes
-  const getDirection = (id) => {
-    const currentPos = pacs[id]
-    const prevPos = prevPacs[id]
+  const getDirection = (pacId) => {
+    const currentPac = pacsArray.find(p => p.id === pacId)
+    const prevPac = prevPacsArray.find(p => p.id === pacId)
     
-    if (!prevPos || !currentPos) return 'left' // Direction initiale: gauche (orientation par défaut des sprites)
+    if (!prevPac || !currentPac) return 'left'
+    
+    const currentPos = currentPac.position
+    const prevPos = prevPac.position
+    
     if (currentPos[0] > prevPos[0]) return 'right'
     if (currentPos[0] < prevPos[0]) return 'left'
     if (currentPos[1] > prevPos[1]) return 'down'
     if (currentPos[1] < prevPos[1]) return 'up'
-    return 'left' // Par défaut: gauche
+    return 'left'
   }
 
   return (
@@ -33,24 +65,17 @@ function Grid({state, prevState, winnerMessage}){
             let content = ''
             if(pelletSet.has(key)) content = '·'
             
-            // Vérifier s'il y a un pac sur cette cellule
-            let hasPac = false
-            for(const id in pacs){
-              const pos = pacs[id]
-              if(pos && pos[0]===x && pos[1]===y){
-                hasPac = true
-                break
-              }
-            }
-            
             return (
               <div className="cell" key={x} style={{ position: 'relative' }}>
                 {content}
-                {/* Afficher le sprite si un pac est sur cette cellule */}
-                {Object.entries(pacs).map(([id, pos]) => {
+                {/* Afficher les sprites des pacs sur cette cellule */}
+                {pacsArray.map((pac) => {
+                  const pos = pac.position
                   if (pos && pos[0] === x && pos[1] === y) {
+                    // Déterminer si c'est un pac du joueur (owner='player')
+                    const isPlayer = pac.owner === 'player'
                     return (
-                      <div key={id} style={{ 
+                      <div key={pac.id} style={{ 
                         position: 'absolute', 
                         top: '50%', 
                         left: '50%', 
@@ -62,8 +87,8 @@ function Grid({state, prevState, winnerMessage}){
                         justifyContent: 'center'
                       }}>
                         <PacmanSprite
-                          isPlayer={id === 'player'}
-                          direction={getDirection(id)}
+                          isPlayer={isPlayer}
+                          direction={getDirection(pac.id)}
                         />
                       </div>
                     )

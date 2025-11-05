@@ -207,31 +207,26 @@ function PlayerSelectionModal({
         <h3 style={{ margin: '0 0 16px 0' }}>{title}</h3>
         
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-          {/* Boss option */}
-          <BotOption
-            botId="Boss"
-            name="Boss"
-            avatarUrl="/avatars/boss.svg"
-            isSelected={selectedPlayer === 'Boss'}
-            backgroundColor="#fff9e6"
-            borderColorHover="#ffd700"
-            onSelect={() => onSelectBot('Boss')}
-          />
-          
-          {/* Other bots */}
-          {availableBots.map(bot => (
-            <BotOption
-              key={bot.id}
-              botId={`bot:${bot.id}`}
-              name={bot.name}
-              avatarUrl={getAvatarUrl(`bot:${bot.id}`)}
-              eloRating={bot.elo_rating}
-              isSelected={selectedPlayer === `bot:${bot.id}`}
-              backgroundColor="#e8f5e9"
-              borderColorHover="#4a90e2"
-              onSelect={() => onSelectBot(`bot:${bot.id}`)}
-            />
-          ))}
+          {/* All bots including Boss */}
+          {availableBots.map(bot => {
+            // Utiliser une clé unique basée sur is_boss pour éviter les collisions
+            const uniqueKey = bot.is_boss ? `boss-${bot.id}` : `bot-${bot.id}`
+            const botId = `bot:${bot.id}`
+            
+            return (
+              <BotOption
+                key={uniqueKey}
+                botId={botId}
+                name={bot.name}
+                avatarUrl={getAvatarUrl(botId)}
+                eloRating={bot.elo_rating}
+                isSelected={selectedPlayer === botId}
+                backgroundColor={bot.is_boss ? "#fff9e6" : "#e8f5e9"}
+                borderColorHover={bot.is_boss ? "#ffd700" : "#4a90e2"}
+                onSelect={() => onSelectBot(botId)}
+              />
+            )
+          })}
         </div>
         
         <button

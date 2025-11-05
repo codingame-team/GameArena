@@ -308,7 +308,7 @@ while True:
             return None
     
     def complete_match(self, match_id, winner, player_score, opponent_score, turns):
-        """Complete a match and update ELO ratings.
+        """Complete a match and update ELO ratings for bots and users.
         
         Args:
             match_id: Match ID
@@ -317,6 +317,8 @@ while True:
             opponent_score: Final score for opponent
             turns: Number of turns played
         """
+        from leagues import LeagueManager
+        
         match = Match.query.get(match_id)
         if not match:
             logger.error(f"Match {match_id} not found")
@@ -337,38 +339,83 @@ while True:
         else:  # draw
             player_result = 0.5
         
+        # Get bots for match count
+        player_bot = Bot.query.get(match.player_bot_id)
+        opponent_bot = Bot.query.get(match.opponent_bot_id)
+        
+        if not player_bot or not opponent_bot:
+            logger.error(f"Bots not found for match {match_id}")
+            return False
+        
+        # Calculate ELO changes with adaptive K-factor
         player_elo_change = calculate_elo_change(
             match.player_elo_before,
             match.opponent_elo_before,
-            player_result
+            player_result,
+            games_played_a=player_bot.match_count
         )
-        opponent_elo_change = -player_elo_change if player_result != 0.5 else calculate_elo_change(
+        opponent_elo_change = calculate_elo_change(
             match.opponent_elo_before,
             match.player_elo_before,
-            1.0 - player_result
+            1.0 - player_result,
+            games_played_a=opponent_bot.match_count
         )
         
         match.player_elo_after = match.player_elo_before + player_elo_change
         match.opponent_elo_after = match.opponent_elo_before + opponent_elo_change
         
         # Update bot stats
-        player_bot = Bot.query.get(match.player_bot_id)
-        opponent_bot = Bot.query.get(match.opponent_bot_id)
+        player_bot.elo_rating = match.player_elo_after
+        player_bot.match_count += 1
+        if winner == 'player':
+            player_bot.win_count += 1
         
-        if player_bot and opponent_bot:
-            player_bot.elo_rating = match.player_elo_after
-            player_bot.match_count += 1
-            if winner == 'player':
-                player_bot.win_count += 1
+        opponent_bot.elo_rating = match.opponent_elo_after
+        opponent_bot.match_count += 1
+        if winner == 'opponent':
+            opponent_bot.win_count += 1
+        
+        # Update USER ELO and league
+        player_user = User.query.get(player_bot.user_id)
+        opponent_user = User.query.get(opponent_bot.user_id)
+        
+        if player_user:
+            old_elo = player_user.elo_rating
+            old_league = player_user.league
+            player_user.elo_rating = match.player_elo_after
             
-            opponent_bot.elo_rating = match.opponent_elo_after
-            opponent_bot.match_count += 1
-            if winner == 'opponent':
-                opponent_bot.win_count += 1
+            # Update league based on new ELO
+            new_league = LeagueManager.get_league_from_elo(player_user.elo_rating)
+            player_user.league = int(new_league)
+            
+            # Log promotion/demotion
+            if int(new_league) > old_league:
+                logger.info(f"🎉 User {player_user.username} promoted to {new_league.to_name()} (ELO: {old_elo} → {player_user.elo_rating})")
+            elif int(new_league) < old_league:
+                logger.info(f"📉 User {player_user.username} demoted to {new_league.to_name()} (ELO: {old_elo} → {player_user.elo_rating})")
+            else:
+                logger.debug(f"User {player_user.username} ELO: {old_elo} → {player_user.elo_rating} ({player_elo_change:+d})")
+        
+        if opponent_user:
+            old_elo = opponent_user.elo_rating
+            old_league = opponent_user.league
+            opponent_user.elo_rating = match.opponent_elo_after
+            
+            # Update league based on new ELO
+            new_league = LeagueManager.get_league_from_elo(opponent_user.elo_rating)
+            opponent_user.league = int(new_league)
+            
+            # Log promotion/demotion
+            if int(new_league) > old_league:
+                logger.info(f"🎉 User {opponent_user.username} promoted to {new_league.to_name()} (ELO: {old_elo} → {opponent_user.elo_rating})")
+            elif int(new_league) < old_league:
+                logger.info(f"📉 User {opponent_user.username} demoted to {new_league.to_name()} (ELO: {old_elo} → {opponent_user.elo_rating})")
+            else:
+                logger.debug(f"User {opponent_user.username} ELO: {old_elo} → {opponent_user.elo_rating} ({opponent_elo_change:+d})")
         
         try:
             db.session.commit()
-            logger.info(f"Match {match_id} completed: {winner} wins ({player_score}-{opponent_score})")
+            logger.info(f"Match {match_id} completed: {winner} wins ({player_score}-{opponent_score}) | ELO changes: {player_elo_change:+d} / {opponent_elo_change:+d}")
             return True
         except Exception as e:
             db.session.rollback()

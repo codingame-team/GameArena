@@ -1,0 +1,13 @@
+<svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="64" cy="64" r="60" fill="#8b4513" stroke="#654321" stroke-width="2"/>
+  <!-- Helmet -->
+  <ellipse cx="64" cy="55" rx="35" ry="28" fill="#c0c0c0"/>
+  <rect x="40" y="50" width="48" height="8" fill="#a0a0a0"/>
+  <!-- Face opening -->
+  <rect x="50" y="62" width="28" height="20" rx="4" fill="#f5deb3"/>
+  <!-- Eyes -->
+  <circle cx="58" cy="70" r="3" fill="#000000"/>
+  <circle cx="70" cy="70" r="3" fill="#000000"/>
+  <!-- Armor shoulder -->
+  <ellipse cx="64" cy="90" rx="38" ry="18" fill="#d3d3d3"/>
+</svg>

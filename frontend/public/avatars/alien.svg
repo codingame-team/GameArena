@@ -1,0 +1,18 @@
+<svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="64" cy="64" r="60" fill="#00ff00" stroke="#00cc00" stroke-width="2"/>
+  <!-- Large alien head -->
+  <ellipse cx="64" cy="58" rx="32" ry="36" fill="#7fff00"/>
+  <!-- Giant eyes -->
+  <ellipse cx="52" cy="58" rx="10" ry="14" fill="#000000"/>
+  <ellipse cx="76" cy="58" rx="10" ry="14" fill="#000000"/>
+  <!-- Eye shine -->
+  <circle cx="54" cy="54" r="3" fill="#ffffff"/>
+  <circle cx="78" cy="54" r="3" fill="#ffffff"/>
+  <!-- Small mouth -->
+  <line x1="60" y1="75" x2="68" y2="75" stroke="#000000" stroke-width="2" stroke-linecap="round"/>
+  <!-- Antennae -->
+  <line x1="50" y1="30" x2="45" y2="22" stroke="#7fff00" stroke-width="3"/>
+  <line x1="78" y1="30" x2="83" y2="22" stroke="#7fff00" stroke-width="3"/>
+  <circle cx="45" cy="22" r="4" fill="#ffff00"/>
+  <circle cx="83" cy="22" r="4" fill="#ffff00"/>
+</svg>

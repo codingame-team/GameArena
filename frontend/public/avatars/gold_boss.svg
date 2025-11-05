@@ -1,0 +1,5 @@
+<svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="64" cy="64" r="60" fill="#ffd700" stroke="#cc9900" stroke-width="2"/>
+  <path d="M 64,30 L 68,44 L 82,46 L 72,56 L 74,70 L 64,63 L 54,70 L 56,56 L 46,46 L 60,44 Z" fill="#cc9900"/>
+  <text x="64" y="90" font-size="32" font-weight="bold" text-anchor="middle" fill="#cc9900" font-family="Arial">BOSS</text>
+</svg>

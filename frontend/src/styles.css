@@ -822,3 +822,274 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
 .settings-section {
   margin-bottom: 24px;
 }
+
+/* ===============================================
+   LEAGUE SYSTEM STYLES
+   =============================================== */
+
+/* League Badge Component */
+.league-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  background: var(--frame-bg);
+  border: 2px solid var(--league-color, #8B4513);
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.league-badge:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.league-badge-emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.league-badge-name {
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* Tailles de badges */
+.league-badge-small {
+  padding: 2px 8px;
+  gap: 4px;
+}
+
+.league-badge-small .league-badge-emoji {
+  font-size: 14px;
+}
+
+.league-badge-small .league-badge-name {
+  font-size: 12px;
+}
+
+.league-badge-medium {
+  padding: 4px 12px;
+  gap: 6px;
+}
+
+.league-badge-medium .league-badge-emoji {
+  font-size: 18px;
+}
+
+.league-badge-medium .league-badge-name {
+  font-size: 14px;
+}
+
+.league-badge-large {
+  padding: 8px 16px;
+  gap: 8px;
+}
+
+.league-badge-large .league-badge-emoji {
+  font-size: 24px;
+}
+
+.league-badge-large .league-badge-name {
+  font-size: 16px;
+}
+
+/* League Progress Component */
+.league-progress {
+  background: var(--frame-bg);
+  padding: 16px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+.league-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.league-progress-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.league-progress-emoji {
+  font-size: 24px;
+}
+
+.league-progress-league-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.league-progress-elo {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.league-progress-elo-value {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.league-progress-elo-target {
+  color: var(--muted);
+}
+
+.league-progress-bar {
+  width: 100%;
+  height: 24px;
+  background: var(--bg);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.league-progress-bar-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 12px;
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.league-progress-bar-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.3),
+    transparent
+  );
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.league-progress-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+
+.league-progress-percent {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.league-progress-next {
+  color: var(--muted);
+}
+
+.league-progress-max {
+  text-align: center;
+  padding: 12px;
+  background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.league-progress-max-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: #111;
+}
+
+/* Arena League Section */
+.arena-league-section {
+  margin-bottom: 24px;
+  padding: 0 20px;
+}
+
+/* User Info Container (pour ArenaPage) */
+.user-info-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-info-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Leaderboard Header avec filtres */
+.leaderboard-header {
+  margin-bottom: 24px;
+}
+
+.leaderboard-header h2 {
+  margin-bottom: 16px;
+}
+
+.league-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.league-filter-btn {
+  padding: 8px 16px;
+  border: 2px solid var(--muted);
+  background: var(--frame-bg);
+  color: var(--text);
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.league-filter-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.league-filter-btn.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+/* Leaderboard table - League cell */
+.league-cell {
+  text-align: center;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .league-progress {
+    padding: 12px;
+  }
+
+  .league-progress-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .league-filters {
+    justify-content: center;
+  }
+
+  .league-filter-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+}
+

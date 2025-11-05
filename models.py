@@ -14,8 +14,9 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    elo_rating = db.Column(db.Integer, default=1200)  # Starting ELO
+    elo_rating = db.Column(db.Integer, default=800)  # Starting ELO (Wood League: 0-999)
     avatar = db.Column(db.String(50), default='my_bot')  # Avatar identifier
+    league = db.Column(db.Integer, default=1)  # League level (1=Wood, 2=Bronze, 3=Silver, 4=Gold)
     
     # Relationships
     bots = db.relationship('Bot', backref='owner', lazy=True, cascade='all, delete-orphan')
@@ -30,15 +31,24 @@ class User(db.Model):
         """Verify password against hash."""
         return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
     
+    def get_league_info(self):
+        """Get league information based on ELO rating."""
+        from leagues import LeagueManager
+        return LeagueManager.get_league_info(self.elo_rating)
+    
     def to_dict(self):
         """Convert user to dictionary (without sensitive data)."""
+        league_info = self.get_league_info()
         return {
             'id': self.id,
             'username': self.username,
             'email': self.email,
             'created_at': self.created_at.isoformat(),
             'elo_rating': self.elo_rating,
-            'avatar': self.avatar or 'my_bot'
+            'avatar': self.avatar or 'my_bot',
+            'league': league_info['current_league'],
+            'league_index': league_info['current_league_index'],
+            'league_progress': league_info['progress_percent']
         }
 
 
@@ -66,6 +76,7 @@ class Bot(db.Model):
     win_count = db.Column(db.Integer, default=0)
     is_active = db.Column(db.Boolean, default=True)  # Active in Arena matchmaking
     latest_version_number = db.Column(db.Integer, default=0)  # Last submitted version number
+    avatar = db.Column(db.String(100), default='my_bot')  # Avatar du bot (pour Boss: wood_boss, bronze_boss, etc.)
     
     # Relationships
     matches_as_player = db.relationship('Match', foreign_keys='Match.player_bot_id', backref='player_bot', lazy=True)
@@ -89,7 +100,8 @@ class Bot(db.Model):
             'win_rate': round((self.win_count / self.match_count * 100), 1) if self.match_count > 0 else 0.0,
             'is_active': self.is_active,
             'latest_version_number': self.latest_version_number,
-            'has_submitted_version': self.latest_version_number > 0
+            'has_submitted_version': self.latest_version_number > 0,
+            'avatar': self.avatar or (self.owner.avatar if self.owner else 'my_bot')  # Avatar du bot ou de son owner
         }
         if include_code:
             result['code'] = self.code
@@ -227,17 +239,27 @@ class Match(db.Model):
         }
 
 
-def calculate_elo_change(rating_a, rating_b, score_a, k=32):
-    """Calculate ELO rating change.
+def calculate_elo_change(rating_a, rating_b, score_a, k=32, games_played_a=0):
+    """Calculate ELO rating change with adaptive K-factor.
     
     Args:
         rating_a: Current ELO rating of player A
         rating_b: Current ELO rating of player B
         score_a: Actual score of player A (1.0 for win, 0.5 for draw, 0.0 for loss)
-        k: K-factor (maximum rating change per game)
+        k: Base K-factor (can be overridden by adaptive logic)
+        games_played_a: Number of games played by player A (for adaptive K)
     
     Returns:
         Change in rating for player A (can be negative)
     """
+    # Adaptive K-factor based on experience
+    if games_played_a > 0:
+        if games_played_a < 30:
+            k = 40  # Novice: ratings change faster
+        elif games_played_a < 100:
+            k = 30  # Intermediate
+        else:
+            k = 20  # Expert: more stable ratings
+    
     expected_a = 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
     return round(k * (score_a - expected_a))
