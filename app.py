@@ -1536,7 +1536,7 @@ def api_submit_bot_to_arena(bot_id):
         
         # TODO: Refactoriser placement matches dans MatchService
         # Run placement matches synchronously
-        # Get up to 20 other active arena bots for placement matches
+        # Get up to 100 other active arena bots for placement matches
         # Select randomly to ensure variety and fairness
         import random
         
@@ -1546,8 +1546,8 @@ def api_submit_bot_to_arena(bot_id):
             Bot.latest_version_number > 0
         ).all()
         
-        # Limit to 20 matches maximum
-        num_matches = min(20, len(all_opponents))
+        # Limit to 100 matches maximum
+        num_matches = min(100, len(all_opponents))
         opponents = random.sample(all_opponents, num_matches) if all_opponents else []
         
         placement_results = []
@@ -1572,7 +1572,7 @@ def api_submit_bot_to_arena(bot_id):
             'version': version_info,
             'message': f"Bot submitted to Arena as version {version_info['version_name']}. Played {len(placement_results)} placement matches.",
             'placement_matches': len(placement_results),
-            'max_matches': 20,
+            'max_matches': 100,
             'results': placement_results
         }), 201
         
