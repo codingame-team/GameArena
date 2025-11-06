@@ -14,9 +14,9 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    elo_rating = db.Column(db.Integer, default=800)  # Starting ELO (Wood League: 0-999)
+    elo_rating = db.Column(db.Integer, default=800)  # Starting ELO (départ en Wood1)
     avatar = db.Column(db.String(50), default='my_bot')  # Avatar identifier
-    league = db.Column(db.Integer, default=1)  # League level (1=Wood, 2=Bronze, 3=Silver, 4=Gold)
+    league = db.Column(db.Integer, default=1)  # League level (1=Wood2, 2=Wood1, 3=Bronze, 4=Silver, 5=Gold)
     
     # Relationships
     bots = db.relationship('Bot', backref='owner', lazy=True, cascade='all, delete-orphan')

@@ -660,7 +660,7 @@ export default function Visualizer({
       </div>
 
       {/* Game Rules Block - Always visible - CodinGame Style */}
-      {currentLeague.toLowerCase() === 'wood' ? (
+      {['wood2', 'wood1'].includes(currentLeague.toLowerCase()) ? (
         <GameRules league={currentLeague} />
       ) : (
         <PacmanAdvancedRules league={currentLeague} />

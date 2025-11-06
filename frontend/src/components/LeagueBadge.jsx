@@ -45,11 +45,11 @@ export default function LeagueBadge({
   return (
     <div 
       className={`league-badge ${sizeClasses[size]} ${className}`}
-      title={`${leagueConfig.name} League`}
+      title={`${leagueConfig.displayName || leagueConfig.name} League`}
       style={{ '--league-color': leagueConfig.color }}
     >
       <span className="league-badge-emoji">{leagueConfig.emoji}</span>
-      {showName && <span className="league-badge-name">{leagueConfig.name}</span>}
+      {showName && <span className="league-badge-name">{leagueConfig.displayName || leagueConfig.name}</span>}
     </div>
   );
 }

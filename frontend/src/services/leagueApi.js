@@ -85,27 +85,39 @@ export const leagueApi = {
 
 /**
  * Constantes utiles pour les ligues
+ * Mise à jour: 5 ligues (Wood2, Wood1, Bronze, Silver, Gold)
  */
 export const LEAGUE_CONFIG = {
   leagues: [
-    { name: 'Wood', emoji: '🪵', index: 1, color: '#8B4513' },
-    { name: 'Bronze', emoji: '🥉', index: 2, color: '#CD7F32' },
-    { name: 'Silver', emoji: '🥈', index: 3, color: '#C0C0C0' },
-    { name: 'Gold', emoji: '🥇', index: 4, color: '#FFD700' }
+    { name: 'Wood2', displayName: 'Wood 2', emoji: '🌱', index: 1, color: '#6B4423' },
+    { name: 'Wood1', displayName: 'Wood 1', emoji: '🪵', index: 2, color: '#8B4513' },
+    { name: 'Bronze', displayName: 'Bronze', emoji: '🥉', index: 3, color: '#CD7F32' },
+    { name: 'Silver', displayName: 'Silver', emoji: '🥈', index: 4, color: '#C0C0C0' },
+    { name: 'Gold', displayName: 'Gold', emoji: '🥇', index: 5, color: '#FFD700' }
   ],
 
   /**
    * Récupère la config d'une ligue par son nom
-   * @param {string} leagueName - Nom de la ligue
+   * @param {string} leagueName - Nom de la ligue (supporte Wood/Wood2/Wood1)
    * @returns {Object|null}
    */
   getByName(leagueName) {
-    return this.leagues.find(l => l.name.toLowerCase() === leagueName.toLowerCase());
+    const normalized = leagueName.toLowerCase().replace(/\s+/g, '');
+    
+    // Rétrocompatibilité: "Wood" -> "Wood2"
+    if (normalized === 'wood') {
+      return this.leagues.find(l => l.name === 'Wood2');
+    }
+    
+    return this.leagues.find(l => 
+      l.name.toLowerCase() === normalized || 
+      l.displayName.toLowerCase().replace(/\s+/g, '') === normalized
+    );
   },
 
   /**
    * Récupère la config d'une ligue par son index
-   * @param {number} index - Index de la ligue (1-4)
+   * @param {number} index - Index de la ligue (1-5)
    * @returns {Object|null}
    */
   getByIndex(index) {

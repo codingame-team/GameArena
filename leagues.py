@@ -2,48 +2,70 @@
 
 Implémente un système progressif de difficultés inspiré du CG Spring Challenge 2020.
 Chaque ligue active progressivement de nouvelles fonctionnalités.
+
+Structure des 5 ligues CodinGame officielles :
+- Wood 2 (level1) : 1 pac seulement
+- Wood 1 (level2) : Multiple pacs, collisions itératives
+- Bronze (level3) : Identique à Wood 1 (pas de nouvelles règles)
+- Silver (level4) : + types + abilities + fog of war
+- Gold (level5) : + type DEAD visible
 """
 from enum import IntEnum
 from typing import Dict, Any
 
 class League(IntEnum):
     """Ligues disponibles (ordre croissant de difficulté)."""
-    WOOD = 1      # Débutant : règles simplifiées
-    BRONZE = 2    # Intermédiaire : multiple pacs
-    SILVER = 3    # Avancé : abilities + fog
-    GOLD = 4      # Expert : toutes les features
+    WOOD2 = 1     # CG Wood 2 (level1) : règles simplifiées, 1 pac
+    WOOD1 = 2     # CG Wood 1 (level2) : multiple pacs, collisions itératives
+    BRONZE = 3    # CG Bronze (level3) : identique à Wood 1
+    SILVER = 4    # CG Silver (level4) : abilities + fog + types
+    GOLD = 5      # CG Gold (level5) : + type DEAD visible
     
     @classmethod
     def from_name(cls, name: str) -> 'League':
-        """Convertit un nom de ligue en enum."""
+        """Convertit un nom de ligue en enum.
+        
+        Gère la rétrocompatibilité avec l'ancien système 4 ligues :
+        - 'WOOD' -> WOOD2 (par défaut pour compatibilité)
+        """
         name = name.upper()
+        # Rétrocompatibilité : ancien 'WOOD' -> WOOD2
         if name == 'WOOD':
-            return cls.WOOD
+            return cls.WOOD2
+        if name == 'WOOD2' or name == 'WOOD 2':
+            return cls.WOOD2
+        if name == 'WOOD1' or name == 'WOOD 1':
+            return cls.WOOD1
         if name == 'BRONZE':
             return cls.BRONZE
         if name == 'SILVER':
             return cls.SILVER
         if name == 'GOLD':
             return cls.GOLD
-        return cls.WOOD  # Default
+        return cls.WOOD2  # Default
     
     @classmethod
     def from_index(cls, index: int) -> 'League':
-        """Convertit un index (1-4) en enum."""
-        return cls(max(1, min(4, index)))
+        """Convertit un index (1-5) en enum."""
+        return cls(max(1, min(5, index)))
     
     def to_name(self) -> str:
         """Retourne le nom de la ligue."""
+        if self == League.WOOD2:
+            return "Wood2"
+        if self == League.WOOD1:
+            return "Wood1"
         return self.name.capitalize()
 
 class LeagueRules:
     """Configuration des règles selon la ligue.
     
     Chaque ligue active progressivement de nouvelles fonctionnalités :
-    - Wood (1) : Jeu simple, 1 pac, pas de fog, pas d'abilities
-    - Bronze (2) : Multiple pacs, toujours pas de fog ni abilities
-    - Silver (3) : + Fog of War + Abilities (SPEED, SWITCH)
-    - Gold (4) : Toutes les features + dead pacs info
+    - Wood 2 (1) : Jeu simple, 1 pac, pas de fog, pas d'abilities
+    - Wood 1 (2) : Multiple pacs, collisions itératives, toujours pas de fog ni abilities
+    - Bronze (3) : Identique à Wood 1 (pas de nouvelles règles)
+    - Silver (4) : + Fog of War + Abilities (SPEED, SWITCH) + Types (ROCK/PAPER/SCISSORS)
+    - Gold (5) : Toutes les features + visibilité du type DEAD pour pacs morts
     """
     
     def __init__(self, league: League = League.GOLD):
@@ -72,8 +94,8 @@ class LeagueRules:
     def _apply_league_restrictions(self):
         """Applique les restrictions selon la ligue."""
         
-        # Wood League (1) : Très simplifié
-        if self.league == League.WOOD:
+        # Wood 2 League (1) : Très simplifié, 1 pac seulement
+        if self.league == League.WOOD2:
             self.min_pacs_per_player = 1
             self.max_pacs_per_player = 1
             self.fog_enabled = False
@@ -82,7 +104,17 @@ class LeagueRules:
             self.provide_dead_pacs = False
             self.num_cherries = 2  # Moins de cherries
         
-        # Bronze League (2) : Multiple pacs mais pas d'abilities
+        # Wood 1 League (2) : Multiple pacs, pas d'abilities
+        elif self.league == League.WOOD1:
+            self.min_pacs_per_player = 2
+            self.max_pacs_per_player = 3
+            self.fog_enabled = False
+            self.speed_ability_available = False
+            self.switch_ability_available = False
+            self.provide_dead_pacs = False
+            self.num_cherries = 4
+        
+        # Bronze League (3) : Identique à Wood 1 (pas de nouvelles règles)
         elif self.league == League.BRONZE:
             self.min_pacs_per_player = 2
             self.max_pacs_per_player = 3
@@ -92,7 +124,7 @@ class LeagueRules:
             self.provide_dead_pacs = False
             self.num_cherries = 4
         
-        # Silver League (3) : + Abilities + Fog mais pas dead pacs info
+        # Silver League (4) : + Abilities + Fog mais pas dead pacs info
         elif self.league == League.SILVER:
             self.min_pacs_per_player = 3
             self.max_pacs_per_player = 4
@@ -158,10 +190,11 @@ class LeagueManager:
     
     # Seuils ELO pour monter de ligue
     ELO_THRESHOLDS = {
-        League.WOOD: 0,      # 0-999
-        League.BRONZE: 1000,  # 1000-1499
-        League.SILVER: 1500,  # 1500-1999
-        League.GOLD: 2000     # 2000+
+        League.WOOD2: 0,      # 0-799 (débutants)
+        League.WOOD1: 800,    # 800-1099 (intermédiaires)
+        League.BRONZE: 1100,  # 1100-1399 (confirmés)
+        League.SILVER: 1400,  # 1400-1699 (avancés)
+        League.GOLD: 1700     # 1700+ (experts)
     }
     
     @classmethod
@@ -180,8 +213,10 @@ class LeagueManager:
             return League.SILVER
         elif elo >= cls.ELO_THRESHOLDS[League.BRONZE]:
             return League.BRONZE
+        elif elo >= cls.ELO_THRESHOLDS[League.WOOD1]:
+            return League.WOOD1
         else:
-            return League.WOOD
+            return League.WOOD2
     
     @classmethod
     def get_league_name(cls, elo: int) -> str:
@@ -247,15 +282,15 @@ def get_league_rules(league: League | str | int) -> LeagueRules:
     """Factory function pour créer des règles de ligue.
     
     Args:
-        league: Peut être un League enum, un nom ('wood', 'bronze', etc.) ou un index (1-4)
+        league: Peut être un League enum, un nom ('wood2', 'wood1', 'bronze', etc.) ou un index (1-5)
         
     Returns:
         LeagueRules configuré pour la ligue
         
     Examples:
-        >>> rules = get_league_rules(League.WOOD)
+        >>> rules = get_league_rules(League.WOOD2)
         >>> rules = get_league_rules('bronze')
-        >>> rules = get_league_rules(3)  # Silver
+        >>> rules = get_league_rules(4)  # Silver
     """
     if isinstance(league, int):
         league = League.from_index(league)

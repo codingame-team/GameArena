@@ -285,15 +285,17 @@ export const Spacer = ({ height = '12px' }) => (
 )
 
 // Composant complet pour les règles du Pacman
-export default function GameRules({ league = 'wood' }) {
-  // Normaliser la casse (backend retourne "Wood", "Bronze", etc.)
+export default function GameRules({ league = 'wood2' }) {
+  // Normaliser la casse (backend retourne "Wood2", "Wood1", "Bronze", etc.)
   const normalizedLeague = league.toLowerCase()
+  const isWood2 = normalizedLeague === 'wood2' || normalizedLeague === 'wood 2'
+  const isWood1 = normalizedLeague === 'wood1' || normalizedLeague === 'wood 1'
   
   return (
     <RulesContainer>
       {/* Alerte de ligue */}
-      {normalizedLeague === 'wood' && (
-        <LeagueAlert level="Ligue Wood">
+      {isWood2 && (
+        <LeagueAlert level="Ligue Wood 2">
           <p>
             Pour ce challenge, plusieurs versions du même jeu seront disponibles.
             Quand vous aurez prouvé votre valeur dans la première version, vous
@@ -302,8 +304,8 @@ export default function GameRules({ league = 'wood' }) {
         </LeagueAlert>
       )}
 
-      {league === 'bronze' && (
-        <LeagueAlert level="Ligue Bronze - Nouvelles règles">
+      {isWood1 && (
+        <LeagueAlert level="Ligue Wood 1 - Nouvelles règles">
           <p>
             Vous pouvez maintenant contrôler plusieurs Pacs !
             <br /><br />
@@ -323,8 +325,9 @@ export default function GameRules({ league = 'wood' }) {
       <Section title="Règles" icon="📖">
         <Paragraph>
           Le jeu se joue sur une grille qui vous est donnée au début de chaque partie.
-          La grille est composée de murs et de sol. Chaque joueur contrôle un ou plusieurs
-          pacs qui peuvent bouger dans la grille.
+          La grille est composée de murs et de sol. 
+          {isWood2 && ' Dans cette première ligue, chaque joueur contrôle un seul pac qui peut bouger dans la grille.'}
+          {isWood1 && ' Chaque joueur contrôle une équipe de pacs qui peuvent bouger dans la grille.'}
         </Paragraph>
 
         <SubSection title="La grille" emoji="🗺️">
@@ -355,12 +358,31 @@ export default function GameRules({ league = 'wood' }) {
         </SubSection>
 
         <SubSection title="Les Pacs" emoji="🔵🔴">
+          {isWood2 && (
+            <>
+              <Paragraph>
+                Chaque joueur contrôle un pac. Mais dans les ligues suivantes, vous contrôlerez jusqu'à <Const>5</Const> pacs chacun.
+              </Paragraph>
+              <Spacer />
+            </>
+          )}
+          {isWood1 && (
+            <>
+              <Paragraph>
+                Chaque joueur commence avec le même nombre de pacs, jusqu'à <Const>5</Const> chacun.
+              </Paragraph>
+              <Spacer />
+            </>
+          )}
           <Paragraph>
             Chaque joueur contrôle un ou plusieurs pacs. À chaque tour, vous recevez
             les informations relatives aux pacs et pastilles qui sont visibles.
           </Paragraph>
           <Spacer />
-          <Paragraph>Les pacs peuvent recevoir les commandes suivantes :</Paragraph>
+          <Paragraph>
+            {isWood2 && 'Votre pac peut recevoir la commande suivante :'}
+            {isWood1 && 'Les pacs peuvent recevoir les commandes suivantes (un pac ne peut recevoir qu\'une commande par tour) :'}
+          </Paragraph>
           <BulletList items={[
             <>
               <Action>MOVE x y</Action> : Donne au pac une case cible. Le pac va choisir
@@ -371,10 +393,10 @@ export default function GameRules({ league = 'wood' }) {
           ]} />
           <Spacer />
           <Paragraph>
-            Format de sortie : <Code>MOVE x y</Code>
+            Format de sortie : <Code>{isWood2 ? 'MOVE x y' : 'MOVE pacId x y'}</Code>
           </Paragraph>
           <Paragraph>
-            Exemple : <Code>MOVE 3 2</Code> pour aller vers la position (3, 2)
+            Exemple : <Code>{isWood2 ? 'MOVE 3 2' : 'MOVE 0 3 2 | MOVE 1 5 7'}</Code> {isWood2 ? 'pour aller vers la position (3, 2)' : 'pour déplacer deux pacs'}
           </Paragraph>
           <Spacer />
           <Paragraph>
@@ -412,6 +434,81 @@ export default function GameRules({ league = 'wood' }) {
           'Rajoutez du texte à la fin d\'une commande pour l\'afficher au-dessus du pac',
           'Utilisez le clavier pour contrôler : espace pour lire/pause, flèches pour naviguer'
         ]} />
+      </Section>
+
+      {/* Protocole de jeu */}
+      <Section title="Protocole de jeu" icon="📡">
+        <SubSection title="Entrées d'initialisation">
+          <Paragraph>
+            <strong>Ligne 1 :</strong> deux entiers <Variable>width</Variable> et <Variable>height</Variable> pour la taille de la grille.
+          </Paragraph>
+          <Paragraph>
+            <strong>Les <Variable>height</Variable> lignes suivantes :</strong> une chaîne de <Variable>width</Variable>{' '}
+            caractères représentant les cases de cette ligne : <Const>' '</Const> pour du sol et <Const>'#'</Const> pour un mur.
+          </Paragraph>
+        </SubSection>
+
+        <SubSection title="Entrées pour un tour de jeu">
+          <Paragraph><strong>Ligne 1 :</strong> Deux entiers séparés par un espace :</Paragraph>
+          <BulletList items={[
+            <><Variable>myScore</Variable> : votre score actuel</>,
+            <><Variable>opponentScore</Variable> : le score de votre adversaire</>
+          ]} />
+          
+          <Spacer />
+          <Paragraph><strong>Ligne 2 :</strong> Un entier :</Paragraph>
+          <BulletList items={[
+            <><Variable>visiblePacCount</Variable> : le nombre de pacs visibles pour vous</>
+          ]} />
+
+          <Spacer />
+          <Paragraph><strong>Les <Variable>visiblePacCount</Variable> lignes suivantes :</strong></Paragraph>
+          <BulletList items={[
+            <><Variable>pacId</Variable> : l'ID du pac (vaut toujours <Const>0</Const> dans la ligue Wood)</>,
+            <><Variable>mine</Variable> : le propriétaire du pac (1 si ce pac est à vous, 0 sinon)</>,
+            <><Variable>x</Variable> & <Variable>y</Variable> : la position du pac</>,
+            <><Variable>typeId</Variable> : inutilisé dans cette ligue</>,
+            <><Variable>speedTurnsLeft</Variable> : inutilisé dans cette ligue</>,
+            <><Variable>abilityCooldown</Variable> : inutilisé dans cette ligue</>
+          ]} />
+
+          <Spacer />
+          <Paragraph>
+            <strong>Ligne suivante :</strong> un entier <Variable>visiblePelletCount</Variable> : le nombre de pastilles visibles pour vous
+          </Paragraph>
+          <Paragraph>
+            <strong>Les <Variable>visiblePelletCount</Variable> lignes suivantes :</strong> trois entiers :
+          </Paragraph>
+          <BulletList items={[
+            <><Variable>x</Variable> & <Variable>y</Variable> : la position de la pastille</>,
+            <><Variable>value</Variable> : le score de la pastille</>
+          ]} />
+        </SubSection>
+
+        <SubSection title="Sortie pour un tour de jeu">
+          <Paragraph>
+            {isWood2 && 'Une seule ligne avec votre action :'}
+            {isWood1 && 'Une seule ligne avec une ou plusieurs commandes séparées par | (pipe). Par exemple : MOVE 0 5 7 | MOVE 1 16 10.'}
+          </Paragraph>
+          <BulletList items={[
+            <>
+              <Action>{isWood2 ? 'MOVE x y' : 'MOVE pacId x y'}</Action> : {isWood2 ? 'votre pac se déplace vers la case ciblée.' : 'le pac avec l\'identifiant pacId se déplace vers la case ciblée.'}
+            </>
+          ]} />
+          <Spacer />
+          <Paragraph>
+            Exemple : <Code>{isWood2 ? 'MOVE 5 7' : 'MOVE 0 5 7 | MOVE 1 3 2'}</Code>
+          </Paragraph>
+        </SubSection>
+
+        <SubSection title="Contraintes">
+          <Paragraph>
+            Temps de réponse par tour ≤ <Const>50</Const>ms
+          </Paragraph>
+          <Paragraph>
+            Temps de réponse au premier tour ≤ <Const>1000</Const>ms
+          </Paragraph>
+        </SubSection>
       </Section>
     </RulesContainer>
   )

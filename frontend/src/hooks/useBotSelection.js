@@ -184,9 +184,6 @@ export function useBotSelection() {
    */
   const getAvatarUrl = useCallback((playerSelection) => {
     console.log('🔍 getAvatarUrl called for:', playerSelection)
-    console.log('   - currentUser:', currentUser?.id)
-    console.log('   - customAvatarBlobUrl:', customAvatarBlobUrl ? 'SET' : 'NULL')
-    console.log('   - botOwnerAvatars keys:', Object.keys(botOwnerAvatars))
     
     if (!playerSelection) return '/avatars/no_avatar.svg'
     
@@ -196,18 +193,18 @@ export function useBotSelection() {
       const selectedBotId = parseInt(playerSelection.substring(4))
       
       const bot = availableBots.find(b => b.id === selectedBotId)
-      console.log('   - bot found:', bot?.id, 'user_id:', bot?.user_id, 'is_boss:', bot?.is_boss)
+      console.log('   - bot found:', bot?.id, 'name:', bot?.name, 'is_boss:', bot?.is_boss, 'avatar:', bot?.avatar)
       
       // Si c'est un Boss, utiliser son avatar spécifique
       if (bot && bot.is_boss) {
         const bossAvatar = bot.avatar || 'boss'
-        console.log('✅ Using Boss avatar:', bossAvatar)
+        console.log('✅ Using Boss avatar:', bossAvatar, '-> URL:', `/avatars/${bossAvatar}.svg`)
         return `/avatars/${bossAvatar}.svg`
       }
       
       // Si c'est le bot de l'utilisateur courant et qu'on a un avatar custom
       if (bot && currentUser && bot.user_id === currentUser.id && customAvatarBlobUrl) {
-        console.log('✅ Using current user custom avatar for bot', selectedBotId, ':', customAvatarBlobUrl.substring(0, 50))
+        console.log('✅ Using current user custom avatar for bot', selectedBotId)
         return customAvatarBlobUrl
       }
       
@@ -217,10 +214,14 @@ export function useBotSelection() {
         return botOwnerAvatars[selectedBotId]
       }
       
-      console.log('📁 Bot', selectedBotId, 'owner_avatar:', bot?.owner_avatar)
-      if (bot && bot.owner_avatar && bot.owner_avatar !== 'default') {
-        return `/avatars/${bot.owner_avatar}.svg`
+      // Fallback: utiliser l'avatar du bot ou de son propriétaire
+      if (bot) {
+        // Préférer bot.avatar si défini, sinon bot.owner_avatar
+        const avatarName = bot.avatar || bot.owner_avatar || 'my_bot'
+        console.log('📁 Using fallback avatar for bot', selectedBotId, ':', avatarName)
+        return `/avatars/${avatarName}.svg`
       }
+      
       return '/avatars/my_bot.svg'
     }
     

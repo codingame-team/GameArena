@@ -1042,7 +1042,7 @@ def api_get_leagues():
     from leagues import League, LeagueRules
     
     leagues = []
-    for league in [League.WOOD, League.BRONZE, League.SILVER, League.GOLD]:
+    for league in [League.WOOD2, League.WOOD1, League.BRONZE, League.SILVER, League.GOLD]:
         rules = LeagueRules(league)
         leagues.append({
             'name': league.to_name(),
@@ -1266,7 +1266,7 @@ def api_get_bots_by_league():
                         'elo_rating': bot.elo_rating,
                         'match_count': bot.match_count,
                         'win_count': bot.win_count,
-                        'avatar': bot.avatar or owner.avatar or 'my_bot',
+                        'avatar': owner.avatar or bot.avatar or 'my_bot',
                         'is_boss': False
                     })
         
@@ -2028,7 +2028,7 @@ def api_get_all_bosses():
         from leagues import League
         
         bosses = []
-        for league in [League.WOOD, League.BRONZE, League.SILVER, League.GOLD]:
+        for league in [League.WOOD2, League.WOOD1, League.BRONZE, League.SILVER, League.GOLD]:
             boss = BossSystem.get_boss_for_league(league)
             config = BossSystem.BOSS_CONFIG.get(league)
             

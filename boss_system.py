@@ -22,35 +22,44 @@ class BossSystem:
     """
     
     # Noms et ELO cibles des Boss par ligue
+    # Tous les Boss appartiennent à l'utilisateur 'system'
     BOSS_CONFIG = {
-        League.WOOD: {
-            'name': 'Wood Boss',
-            'username': 'boss_wood',
-            'elo': 950,  # Juste en dessous du seuil Bronze (1000)
-            'description': 'Boss de la ligue Wood - Maîtrise les bases du jeu',
+        League.WOOD2: {
+            'name': 'Wood 2 Boss',
+            'username': 'system',
+            'elo': 750,  # Juste en dessous du seuil Wood 1 (800)
+            'description': 'Boss de la ligue Wood 2 - Découverte du jeu avec 1 pac',
             'strategy': 'basic_greedy',
-            'avatar': 'wood_boss'  # Avatar unique pour le Wood Boss
+            'avatar': 'wood2_boss'
+        },
+        League.WOOD1: {
+            'name': 'Wood 1 Boss',
+            'username': 'system',
+            'elo': 1050,  # Juste en dessous du seuil Bronze (1100)
+            'description': 'Boss de la ligue Wood 1 - Gestion de multiple pacs',
+            'strategy': 'basic_multi_pac',
+            'avatar': 'wood1_boss'
         },
         League.BRONZE: {
             'name': 'Bronze Boss',
-            'username': 'boss_bronze',
-            'elo': 1450,  # Juste en dessous du seuil Silver (1500)
+            'username': 'system',
+            'elo': 1350,  # Juste en dessous du seuil Silver (1400)
             'description': 'Boss de la ligue Bronze - Gestion multi-pacs efficace',
             'strategy': 'multi_pac_coordinator',
             'avatar': 'bronze_boss'  # Avatar unique pour le Bronze Boss
         },
         League.SILVER: {
             'name': 'Silver Boss',
-            'username': 'boss_silver',
-            'elo': 1950,  # Juste en dessous du seuil Gold (2000)
+            'username': 'system',
+            'elo': 1650,  # Juste en dessous du seuil Gold (1700)
             'description': 'Boss de la ligue Silver - Utilise les abilities et le fog of war',
             'strategy': 'advanced_abilities',
             'avatar': 'silver_boss'  # Avatar unique pour le Silver Boss
         },
         League.GOLD: {
             'name': 'Gold Boss',
-            'username': 'boss_gold',
-            'elo': 2500,  # Boss final, très difficile
+            'username': 'system',
+            'elo': 2100,  # Boss final, très difficile
             'description': 'Boss ultime de la ligue Gold - Maître stratège',
             'strategy': 'master_ai',
             'avatar': 'gold_boss'  # Avatar unique pour le Gold Boss
@@ -70,17 +79,28 @@ class BossSystem:
         Returns:
             Le bot Boss ou None si non trouvé
         """
+        from models import User
+        
         config = cls.BOSS_CONFIG.get(league)
         if not config:
             return None
         
-        # Chercher par nom unique
-        boss = Bot.query.filter_by(
-            name=config['name'],
-            user_id=cls.BOSS_USER_ID
+        # Chercher l'utilisateur Boss par username
+        boss_user = User.query.filter_by(username=config['username']).first()
+        if not boss_user:
+            logger.warning(f"Boss user {config['username']} not found for league {league.to_name()}")
+            return None
+        
+        # Chercher le bot du Boss
+        boss_bot = Bot.query.filter_by(
+            user_id=boss_user.id,
+            name=config['name']
         ).first()
         
-        return boss
+        if not boss_bot:
+            logger.warning(f"Boss bot {config['name']} not found for user {boss_user.username}")
+        
+        return boss_bot
     
     @classmethod
     def get_next_boss(cls, current_elo: int, current_league: int) -> Optional[tuple[League, Bot]]:

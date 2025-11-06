@@ -48,10 +48,16 @@ export default function Leaderboard() {
             Toutes les ligues
           </button>
           <button 
-            className={selectedLeague === 'wood' ? 'league-filter-btn active' : 'league-filter-btn'}
-            onClick={() => setSelectedLeague('wood')}
+            className={selectedLeague === 'wood2' ? 'league-filter-btn active' : 'league-filter-btn'}
+            onClick={() => setSelectedLeague('wood2')}
           >
-            🪵 Wood
+            🌱 Wood 2
+          </button>
+          <button 
+            className={selectedLeague === 'wood1' ? 'league-filter-btn active' : 'league-filter-btn'}
+            onClick={() => setSelectedLeague('wood1')}
+          >
+            🪵 Wood 1
           </button>
           <button 
             className={selectedLeague === 'bronze' ? 'league-filter-btn active' : 'league-filter-btn'}

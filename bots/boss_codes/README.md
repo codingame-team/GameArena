@@ -1,69 +1,289 @@
-# Codes des Boss - Documentation
+# Boss Codes - GameArena
 
-## Vue d'ensemble
+## 🏆 Boss disponibles
 
-Les codes des Boss sont stockés dans des fichiers Python séparés dans le répertoire `bots/boss_codes/` avant d'être sauvegardés en base de données. Cela facilite la maintenance, le versioning et les tests des différentes stratégies de Boss.
+### Wood 2 Boss (ELO 750)
+**Fichier:** `wood2_boss.py` ✅  
+**Stratégie:** Greedy simple - va vers la pastille la plus proche  
+**Niveau:** Débutant  
+**Caractéristiques:**
+- 1 pac seulement (règles Wood 2)
+- Priorise les super-pastilles (value=10)
+- Utilise la distance de Manhattan
+- Explore le centre si pas de pastilles visibles
 
-## Structure des fichiers
+**Difficulté:** ⭐☆☆☆☆
 
+---
+
+### Wood 1 Boss (ELO 1050)
+**Fichier:** `wood1_boss.py` ✅  
+**Stratégie:** Coordination basique entre pacs  
+**Niveau:** Intermédiaire  
+**Caractéristiques:**
+- 2-3 pacs (règles Wood 1)
+- Coordination pour éviter les doublons de cibles
+- Priorise les super-pastilles avec score valeur/distance
+- Exploration intelligente des zones non visitées
+
+**Difficulté:** ⭐⭐☆☆☆
+
+---
+
+### Bronze Boss (ELO 1350)
+**Fichier:** `bronze_boss.py` *(à créer)*  
+**Stratégie:** Coordination avancée + défense basique  
+**Niveau:** Confirmé  
+**Caractéristiques:**
+- 2-3 pacs (règles Bronze = Wood 1)
+- Évite les collisions avec ennemis
+- Stratégie de territoire
+
+**Difficulté:** ⭐⭐⭐☆☆
+
+---
+
+### Silver Boss (ELO 1650)
+**Fichier:** `silver_boss.py` *(à créer)*  
+**Stratégie:** Utilisation des abilities (SWITCH/SPEED) + fog of war  
+**Niveau:** Avancé  
+**Caractéristiques:**
+- 3-4 pacs (règles Silver)
+- Utilise SWITCH pour combat (ROCK/PAPER/SCISSORS)
+- Utilise SPEED pour course aux super-pastilles
+- Gère le fog of war (vision limitée)
+- Cooldown abilities (10 tours)
+
+**Difficulté:** ⭐⭐⭐⭐☆
+
+---
+
+### Gold Boss (ELO 2100)
+**Fichier:** `gold_boss.py` *(à créer)*  
+**Stratégie:** Maître stratège - IA complète  
+**Niveau:** Expert  
+**Caractéristiques:**
+- 2-5 pacs (règles Gold)
+- Toutes les features (abilities, fog, type DEAD)
+- Stratégie offensive et défensive
+- Prédiction des mouvements adverses
+- Optimisation score/risque
+
+**Difficulté:** ⭐⭐⭐⭐⭐
+
+---
+
+## 📝 Structure du code
+
+Tous les boss suivent la même structure :
+
+```python
+#!/usr/bin/env python3
+"""
+Nom du Boss - Description
+Stratégie : ...
+Niveau : ...
+"""
+
+import sys
+import math
+
+# Fonctions helper (distance, recherche, etc.)
+def get_distance(x1, y1, x2, y2):
+    ...
+
+# Lecture initialisation
+width, height = map(int, input().split())
+grid = []
+for _ in range(height):
+    grid.append(input())
+
+# Boucle de jeu
+while True:
+    # Lecture état du tour
+    my_score, opponent_score = map(int, input().split())
+    
+    # Lecture pacs
+    visible_pac_count = int(input())
+    # ... parsing pacs
+    
+    # Lecture pastilles
+    visible_pellet_count = int(input())
+    # ... parsing pellets
+    
+    # Stratégie et décision
+    actions = []
+    # ... logique du boss
+    
+    # Sortie
+    print(" | ".join(actions))
 ```
-bots/boss_codes/
-├── wood_boss.py          # Wood Boss - Stratégie greedy basique
-├── bronze_boss.py        # Bronze Boss - Coordination multi-pacs
-├── silver_boss.py        # Silver Boss - Utilisation des abilities
-└── gold_boss.py          # Gold Boss - IA avancée adaptative
+
+---
+
+## 🚀 Utilisation
+
+### Initialiser les Boss Wood dans la DB
+
+```bash
+cd /Users/display/PycharmProjects/GameArena
+python3 init_wood_bosses.py
 ```
 
-## Fonctionnement
+**Output attendu:**
+```
+🎮 Initialisation des Boss Wood...
+✅ Bot Wood 2 Boss prêt (ID: 14)
+✅ Bot Wood 1 Boss prêt (ID: 15)
+📊 RÉSUMÉ
+✅ Boss créés : 2
+```
+
+### Tester un Boss localement
+
+```bash
+cd bots/boss_codes
+python3 wood2_boss.py < input_test.txt
+```
+
+---
+
+## 📊 Seuils ELO
+
+| Ligue | Seuil | Plage | Boss ELO |
+|-------|-------|-------|----------|
+| Wood2 | 0 | 0-799 | **750** |
+| Wood1 | 800 | 800-1099 | **1050** |
+| Bronze | 1100 | 1100-1399 | **1350** |
+| Silver | 1400 | 1400-1699 | **1650** |
+| Gold | 1700 | 1700+ | **2100** |
+
+Les Boss ont un ELO légèrement inférieur au seuil de la ligue suivante, servant de **gatekeepers** pour valider la progression des joueurs.
+
+---
+
+## 🛠️ Fonctionnement
 
 ### 1. Chargement du code
 
-Le système charge les codes depuis les fichiers lors de l'initialisation des Boss :
+Les codes sont chargés depuis les fichiers lors de l'initialisation :
 
 ```python
-# Dans boss_system.py
-@classmethod
-def _get_boss_code(cls, strategy: str) -> str:
-    """Charge le code depuis bots/boss_codes/<strategy>.py"""
-    strategy_files = {
-        'basic_greedy': 'wood_boss.py',
-        'multi_pac_coordinator': 'bronze_boss.py',
-        'advanced_abilities': 'silver_boss.py',
-        'master_ai': 'gold_boss.py'
-    }
-    # Lecture du fichier...
+# Dans init_wood_bosses.py
+def read_boss_code(filename):
+    filepath = os.path.join('bots', 'boss_codes', filename)
+    with open(filepath, 'r', encoding='utf-8') as f:
+        return f.read()
 ```
 
 ### 2. Sauvegarde en base de données
 
-Lors de l'initialisation des Boss (`init_bosses.py`), le code est :
+Le code est :
 1. Chargé depuis le fichier `.py`
-2. Stocké dans le champ `Bot.code` en base de données
+2. Stocké dans `Bot.code` en base de données
 3. Utilisé pour les matchs via le runner standard
 
-## Avantages de cette approche
+### 3. Exécution en match
 
-### ✅ Maintenance facilitée
-- Code Boss éditable directement dans des fichiers `.py`
-- Syntax highlighting et autocomplétion dans l'IDE
-- Tests unitaires possibles sur chaque stratégie
+Lors d'un match, le système :
+1. Récupère `Bot.code` depuis la DB
+2. Exécute via `BotRunner` (subprocess ou Docker)
+3. Applique les timeouts (50ms/tour, 1000ms init)
 
-### ✅ Versioning Git
-- Historique clair des modifications des stratégies
-- Diffs lisibles entre versions
-- Revenir facilement à une version antérieure
+## ✅ Avantages de cette approche
 
-### ✅ Tests et débogage
-- Exécuter directement les fichiers pour tester
-- Debugger avec des outils Python standards
-- Valider la syntaxe avant sauvegarde
+- **Maintenance facilitée:** Code éditable dans des fichiers `.py` avec IDE
+- **Versioning:** Historique Git des stratégies
+- **Tests:** Tests unitaires possibles sur chaque stratégie
+- **Debugging:** Exécuter directement les fichiers pour tester
+- **Séparation des responsabilités (SRP):** Code métier séparé de la persistence
 
-### ✅ Séparation des responsabilités (SRP)
-- `boss_system.py` : Logique de gestion des Boss
-- `bots/boss_codes/` : Code métier des stratégies
-- `models.py` : Persistence en base de données
+---
 
-## Modification d'un Boss
+## 🧪 Développement
+
+### Créer un nouveau Boss
+
+1. **Créer le fichier**
+```bash
+touch bots/boss_codes/bronze_boss.py
+```
+
+2. **Implémenter la stratégie** selon le niveau de la ligue
+
+3. **Tester localement**
+```bash
+# Créer un fichier de test input_test.txt avec le format CodinGame
+echo "35 17
+#####
+# P #" | python3 bots/boss_codes/bronze_boss.py
+```
+
+4. **Ajouter au BOSS_CONFIG**
+```python
+# Dans boss_system.py
+BOSS_CONFIG = {
+    League.BRONZE: {
+        'name': 'Bronze Boss',
+        'username': 'boss_bronze',
+        'elo': 1350,
+        'description': '...',
+        'strategy': 'coordination_avancee',
+        'avatar': 'bronze_boss'
+    }
+}
+```
+
+5. **Créer le script d'initialisation** (ou modifier `init_bosses.py`)
+
+6. **Exécuter l'initialisation**
+```bash
+python3 init_bosses.py
+```
+
+### Tester un Boss
+
+```bash
+# Test simple
+python3 bots/boss_codes/wood2_boss.py < bots/input.txt
+
+# Test avec debug
+python3 -u bots/boss_codes/wood1_boss.py < bots/input.txt 2> debug.log
+```
+
+### Modifier un Boss existant
+
+1. Éditer le fichier `.py`
+2. Re-initialiser : `python3 init_wood_bosses.py`
+3. Le code en DB sera mis à jour automatiquement
+
+---
+
+## 📚 Références
+
+- **Statement CodinGame:** `/Users/display/PycharmProjects/CG-SpringChallenge2020/config/statement_fr.html.tpl`
+- **Règles par ligue:** `frontend/LEAGUES_MAPPING.md`
+- **Boss system:** `boss_system.py`
+- **Leagues config:** `leagues.py`
+- **Models:** `models.py` (champs Bot.code, Bot.elo_rating)
+
+---
+
+## 📝 TODO
+
+- [ ] Créer `bronze_boss.py` (coordination avancée)
+- [ ] Créer `silver_boss.py` (abilities + fog)
+- [ ] Créer `gold_boss.py` (IA complète)
+- [ ] Tests unitaires pour chaque stratégie
+- [ ] CI/CD pour valider syntaxe des Boss codes
+- [ ] Benchmarks de performance (temps exécution)
+- [ ] Statistiques de victoires des Boss par ligue
+
+---
+
+**Dernière mise à jour:** 6 novembre 2025  
+**Auteur:** GameArena Team
+
 
 ### Étape 1 : Éditer le fichier
 
