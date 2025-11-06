@@ -122,9 +122,15 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
 .logs{ background:var(--log-bg); color:var(--log-color); padding:8px; height:100%; overflow:auto; border-radius:6px }
 
 /* Visualizer component controls */
-.visualizer{ display:flex; flex-direction:column; height:100% }
+.visualizer{ 
+  display:flex; 
+  flex-direction:column; 
+  height:100%; 
+  overflow-y:auto; 
+  overflow-x:hidden 
+}
 .visualizer-canvas{ 
-  flex:1; 
+  flex:0 0 auto; 
   display:flex; 
   flex-direction:column; 
   align-items:stretch; 
@@ -133,8 +139,18 @@ header{ background:var(--header-bg); color:var(--text); padding:12px }
   padding:8px; 
   box-sizing:border-box; 
   min-height:0;
-  position: relative 
+  position: relative;
 }
+
+/* Game Rules Block - Scroll lié avec le plateau */
+.statement-body {
+  flex: 0 0 auto;
+  background: var(--frame-bg);
+  border-top: 2px solid rgba(76, 175, 80, 0.3);
+  margin-top: 12px;
+  padding-bottom: 20px;
+}
+
 .visualizer-controls{ 
   margin-top:8px; 
   display:flex; 

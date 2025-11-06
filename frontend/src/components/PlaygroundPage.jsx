@@ -379,6 +379,7 @@ export default function PlaygroundPage() {
               isPaused={isPaused}
               player1Name={capturedPlayer1Name}
               player2Name={capturedPlayer2Name}
+              currentLeague={leagueInfo?.current_league || 'wood'}
             />
           </div>
 
