@@ -6,7 +6,11 @@ import bcrypt
 db = SQLAlchemy()
 
 class User(db.Model):
-    """User model for authentication."""
+    """User model for authentication only.
+    
+    Users manage authentication and profile information.
+    Game-related data (ELO, league) is stored in Bot records.
+    """
     __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -14,9 +18,7 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    elo_rating = db.Column(db.Integer, default=800)  # Starting ELO (départ en Wood1)
     avatar = db.Column(db.String(50), default='my_bot')  # Avatar identifier
-    league = db.Column(db.Integer, default=1)  # League level (1=Wood2, 2=Wood1, 3=Bronze, 4=Silver, 5=Gold)
     
     # Relationships
     bots = db.relationship('Bot', backref='owner', lazy=True, cascade='all, delete-orphan')
@@ -31,24 +33,14 @@ class User(db.Model):
         """Verify password against hash."""
         return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
     
-    def get_league_info(self):
-        """Get league information based on ELO rating."""
-        from leagues import LeagueManager
-        return LeagueManager.get_league_info(self.elo_rating)
-    
     def to_dict(self):
         """Convert user to dictionary (without sensitive data)."""
-        league_info = self.get_league_info()
         return {
             'id': self.id,
             'username': self.username,
             'email': self.email,
             'created_at': self.created_at.isoformat(),
-            'elo_rating': self.elo_rating,
-            'avatar': self.avatar or 'my_bot',
-            'league': league_info['current_league'],
-            'league_index': league_info['current_league_index'],
-            'league_progress': league_info['progress_percent']
+            'avatar': self.avatar or 'my_bot'
         }
 
 
@@ -61,6 +53,11 @@ class Bot(db.Model):
     
     The 'code' field contains the user's current work-in-progress.
     Only when explicitly submitted to Arena does it create a BotVersion record.
+    
+    Bot-specific fields:
+    - elo_rating: Bot's skill rating (determines matchmaking and league)
+    - league: Current league (1=Wood2, 2=Wood1, 3=Bronze, 4=Silver, 5=Gold)
+    - is_boss: True for Boss bots (league locked, can't be promoted/demoted)
     """
     __tablename__ = 'bots'
     
@@ -71,12 +68,13 @@ class Bot(db.Model):
     referee_type = db.Column(db.String(50), default='pacman')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    elo_rating = db.Column(db.Integer, default=1200)
+    elo_rating = db.Column(db.Integer, default=800)  # Starting ELO (Wood2)
+    league = db.Column(db.Integer, default=1)  # League level (1=Wood2, 2=Wood1, 3=Bronze, 4=Silver, 5=Gold)
     match_count = db.Column(db.Integer, default=0)
     win_count = db.Column(db.Integer, default=0)
     is_active = db.Column(db.Boolean, default=True)  # Active in Arena matchmaking
     latest_version_number = db.Column(db.Integer, default=0)  # Last submitted version number
-    avatar = db.Column(db.String(100), default='my_bot')  # Avatar du bot (pour Boss: wood_boss, bronze_boss, etc.)
+    is_boss = db.Column(db.Boolean, default=False)  # True si c'est un Bot Boss (league locked)
     
     # Relationships
     matches_as_player = db.relationship('Match', foreign_keys='Match.player_bot_id', backref='player_bot', lazy=True)
@@ -84,7 +82,15 @@ class Bot(db.Model):
     versions = db.relationship('BotVersion', backref='bot', lazy=True, cascade='all, delete-orphan', order_by='BotVersion.version_number.desc()')
     
     def to_dict(self, include_code=False):
-        """Convert bot to dictionary."""
+        """Convert bot to dictionary.
+        
+        Avatar comes from the bot's owner (User.avatar).
+        League info is calculated from bot's ELO rating.
+        """
+        from leagues import LeagueManager
+        
+        league_info = LeagueManager.get_league_info(self.elo_rating)
+        
         result = {
             'id': self.id,
             'user_id': self.user_id,
@@ -95,13 +101,17 @@ class Bot(db.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'elo_rating': self.elo_rating,
+            'league': self.league,
+            'league_name': league_info['current_league'],
+            'league_progress': league_info['progress_percent'],
             'match_count': self.match_count,
             'win_count': self.win_count,
             'win_rate': round((self.win_count / self.match_count * 100), 1) if self.match_count > 0 else 0.0,
             'is_active': self.is_active,
             'latest_version_number': self.latest_version_number,
             'has_submitted_version': self.latest_version_number > 0,
-            'avatar': self.avatar or (self.owner.avatar if self.owner else 'my_bot')  # Avatar du bot ou de son owner
+            'avatar': self.owner.avatar if self.owner else 'my_bot',  # Avatar from owner
+            'is_boss': self.is_boss
         }
         if include_code:
             result['code'] = self.code

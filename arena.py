@@ -307,7 +307,7 @@ while True:
             logger.exception("Error creating match")
             return None
     
-    def complete_match(self, match_id, winner, player_score, opponent_score, turns):
+    def complete_match(self, match_id, winner, player_score, opponent_score, turns, skip_league_update=False):
         """Complete a match and update ELO ratings for bots and users.
         
         Args:
@@ -316,6 +316,7 @@ while True:
             player_score: Final score for player
             opponent_score: Final score for opponent
             turns: Number of turns played
+            skip_league_update: If True, don't update bot leagues (useful for placement matches)
         """
         from leagues import LeagueManager
         
@@ -364,54 +365,82 @@ while True:
         match.player_elo_after = match.player_elo_before + player_elo_change
         match.opponent_elo_after = match.opponent_elo_before + opponent_elo_change
         
-        # Update bot stats
-        player_bot.elo_rating = match.player_elo_after
+        # Update bot stats with ELO floor (cannot go below lower league's Boss ELO)
+        from boss_system import BossSystem
+        
+        # Boss ELO is CONSTANT - never changes
+        if player_bot.is_boss:
+            player_bot.elo_rating = match.player_elo_before  # Keep original ELO
+            match.player_elo_after = match.player_elo_before  # Match record shows no change
+            logger.debug(f"Boss bot {player_bot.name} ELO locked at {player_bot.elo_rating} (no change)")
+        else:
+            # Apply ELO floor for normal bots
+            player_elo_floor = BossSystem.get_elo_floor_for_league(player_bot.league)
+            player_bot.elo_rating = max(match.player_elo_after, player_elo_floor)
+            
+            if match.player_elo_after < player_elo_floor:
+                logger.info(f"Bot {player_bot.name} ELO floored: {match.player_elo_after} → {player_elo_floor} (minimum for league {player_bot.league})")
+        
         player_bot.match_count += 1
         if winner == 'player':
             player_bot.win_count += 1
         
-        opponent_bot.elo_rating = match.opponent_elo_after
+        # Update bot league (unless it's a Boss - Boss league is locked)
+        # Skip league update during placement matches (will be done at the end)
+        if not skip_league_update and not player_bot.is_boss:
+            new_league = LeagueManager.get_league_from_elo(player_bot.elo_rating)
+            old_league = player_bot.league
+            player_bot.league = int(new_league)
+            
+            # Log promotion/demotion for player bot
+            if int(new_league) > old_league:
+                logger.info(f"🎉 Bot {player_bot.name} promoted to {new_league.to_name()} (ELO: {match.player_elo_before} → {player_bot.elo_rating})")
+            elif int(new_league) < old_league:
+                logger.info(f"📉 Bot {player_bot.name} demoted to {new_league.to_name()} (ELO: {match.player_elo_before} → {player_bot.elo_rating})")
+        else:
+            # Boss: ELO locked (no change), or league update skipped for placement
+            if player_bot.is_boss:
+                # Already logged above when ELO was locked
+                pass
+            elif skip_league_update:
+                logger.debug(f"Bot {player_bot.name} ELO: {match.player_elo_before} → {player_bot.elo_rating} ({player_elo_change:+d}) [league update skipped for placement]")
+        
+        # Boss ELO is CONSTANT - never changes
+        if opponent_bot.is_boss:
+            opponent_bot.elo_rating = match.opponent_elo_before  # Keep original ELO
+            match.opponent_elo_after = match.opponent_elo_before  # Match record shows no change
+            logger.debug(f"Boss bot {opponent_bot.name} ELO locked at {opponent_bot.elo_rating} (no change)")
+        else:
+            # Apply ELO floor for normal bots
+            opponent_elo_floor = BossSystem.get_elo_floor_for_league(opponent_bot.league)
+            opponent_bot.elo_rating = max(match.opponent_elo_after, opponent_elo_floor)
+            
+            if match.opponent_elo_after < opponent_elo_floor:
+                logger.info(f"Bot {opponent_bot.name} ELO floored: {match.opponent_elo_after} → {opponent_elo_floor} (minimum for league {opponent_bot.league})")
+        
         opponent_bot.match_count += 1
         if winner == 'opponent':
             opponent_bot.win_count += 1
         
-        # Update USER ELO and league
-        player_user = User.query.get(player_bot.user_id)
-        opponent_user = User.query.get(opponent_bot.user_id)
-        
-        if player_user:
-            old_elo = player_user.elo_rating
-            old_league = player_user.league
-            player_user.elo_rating = match.player_elo_after
+        # Update opponent bot league (unless it's a Boss - Boss league is locked)
+        # Skip league update during placement matches (will be done at the end)
+        if not skip_league_update and not opponent_bot.is_boss:
+            new_league = LeagueManager.get_league_from_elo(opponent_bot.elo_rating)
+            old_league = opponent_bot.league
+            opponent_bot.league = int(new_league)
             
-            # Update league based on new ELO
-            new_league = LeagueManager.get_league_from_elo(player_user.elo_rating)
-            player_user.league = int(new_league)
-            
-            # Log promotion/demotion
+            # Log promotion/demotion for opponent bot
             if int(new_league) > old_league:
-                logger.info(f"🎉 User {player_user.username} promoted to {new_league.to_name()} (ELO: {old_elo} → {player_user.elo_rating})")
+                logger.info(f"🎉 Bot {opponent_bot.name} promoted to {new_league.to_name()} (ELO: {match.opponent_elo_before} → {opponent_bot.elo_rating})")
             elif int(new_league) < old_league:
-                logger.info(f"📉 User {player_user.username} demoted to {new_league.to_name()} (ELO: {old_elo} → {player_user.elo_rating})")
-            else:
-                logger.debug(f"User {player_user.username} ELO: {old_elo} → {player_user.elo_rating} ({player_elo_change:+d})")
-        
-        if opponent_user:
-            old_elo = opponent_user.elo_rating
-            old_league = opponent_user.league
-            opponent_user.elo_rating = match.opponent_elo_after
-            
-            # Update league based on new ELO
-            new_league = LeagueManager.get_league_from_elo(opponent_user.elo_rating)
-            opponent_user.league = int(new_league)
-            
-            # Log promotion/demotion
-            if int(new_league) > old_league:
-                logger.info(f"🎉 User {opponent_user.username} promoted to {new_league.to_name()} (ELO: {old_elo} → {opponent_user.elo_rating})")
-            elif int(new_league) < old_league:
-                logger.info(f"📉 User {opponent_user.username} demoted to {new_league.to_name()} (ELO: {old_elo} → {opponent_user.elo_rating})")
-            else:
-                logger.debug(f"User {opponent_user.username} ELO: {old_elo} → {opponent_user.elo_rating} ({opponent_elo_change:+d})")
+                logger.info(f"📉 Bot {opponent_bot.name} demoted to {new_league.to_name()} (ELO: {match.opponent_elo_before} → {opponent_bot.elo_rating})")
+        else:
+            # Boss: ELO locked (no change), or league update skipped for placement
+            if opponent_bot.is_boss:
+                # Already logged above when ELO was locked
+                pass
+            elif skip_league_update:
+                logger.debug(f"Bot {opponent_bot.name} ELO: {match.opponent_elo_before} → {opponent_bot.elo_rating} ({opponent_elo_change:+d}) [league update skipped for placement]")
         
         try:
             db.session.commit()

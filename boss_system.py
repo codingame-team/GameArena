@@ -22,11 +22,11 @@ class BossSystem:
     """
     
     # Noms et ELO cibles des Boss par ligue
-    # Tous les Boss appartiennent à l'utilisateur 'system'
+    # Chaque Boss a son propre utilisateur dédié
     BOSS_CONFIG = {
         League.WOOD2: {
             'name': 'Wood 2 Boss',
-            'username': 'system',
+            'username': 'boss_wood2',  # User dédié
             'elo': 750,  # Juste en dessous du seuil Wood 1 (800)
             'description': 'Boss de la ligue Wood 2 - Découverte du jeu avec 1 pac',
             'strategy': 'basic_greedy',
@@ -34,7 +34,7 @@ class BossSystem:
         },
         League.WOOD1: {
             'name': 'Wood 1 Boss',
-            'username': 'system',
+            'username': 'boss_wood1',  # User dédié
             'elo': 1050,  # Juste en dessous du seuil Bronze (1100)
             'description': 'Boss de la ligue Wood 1 - Gestion de multiple pacs',
             'strategy': 'basic_multi_pac',
@@ -42,7 +42,7 @@ class BossSystem:
         },
         League.BRONZE: {
             'name': 'Bronze Boss',
-            'username': 'system',
+            'username': 'boss_bronze',  # User dédié
             'elo': 1350,  # Juste en dessous du seuil Silver (1400)
             'description': 'Boss de la ligue Bronze - Gestion multi-pacs efficace',
             'strategy': 'multi_pac_coordinator',
@@ -50,7 +50,7 @@ class BossSystem:
         },
         League.SILVER: {
             'name': 'Silver Boss',
-            'username': 'system',
+            'username': 'boss_silver',  # User dédié
             'elo': 1650,  # Juste en dessous du seuil Gold (1700)
             'description': 'Boss de la ligue Silver - Utilise les abilities et le fog of war',
             'strategy': 'advanced_abilities',
@@ -58,16 +58,13 @@ class BossSystem:
         },
         League.GOLD: {
             'name': 'Gold Boss',
-            'username': 'system',
+            'username': 'boss_gold',  # User dédié
             'elo': 2100,  # Boss final, très difficile
             'description': 'Boss ultime de la ligue Gold - Maître stratège',
             'strategy': 'master_ai',
             'avatar': 'gold_boss'  # Avatar unique pour le Gold Boss
         }
     }
-    
-    # User ID spécial pour les Boss (système)
-    BOSS_USER_ID = 1  # Devrait être le compte "system" ou "admin"
     
     @classmethod
     def get_boss_for_league(cls, league: League) -> Optional[Bot]:
@@ -101,6 +98,35 @@ class BossSystem:
             logger.warning(f"Boss bot {config['name']} not found for user {boss_user.username}")
         
         return boss_bot
+    
+    @classmethod
+    def get_elo_floor_for_league(cls, league_index: int) -> int:
+        """Retourne l'ELO minimum pour une ligue donnée.
+        
+        Un bot ne peut pas descendre en dessous de l'ELO du Boss de la ligue inférieure.
+        Pour la ligue la plus basse (WOOD2), l'ELO minimum est 0.
+        
+        Args:
+            league_index: Index de la ligue (1=WOOD2, 2=WOOD1, etc.)
+            
+        Returns:
+            ELO minimum pour cette ligue
+        """
+        current_league = League.from_index(league_index)
+        
+        # WOOD2 est la ligue la plus basse, ELO minimum = 0
+        if current_league == League.WOOD2:
+            return 0
+        
+        # Pour les autres ligues, utiliser l'ELO du Boss de la ligue inférieure
+        lower_league = League.from_index(league_index - 1)
+        boss_config = cls.BOSS_CONFIG.get(lower_league)
+        
+        if boss_config:
+            return boss_config['elo']
+        
+        # Fallback: pas de floor (0)
+        return 0
     
     @classmethod
     def get_next_boss(cls, current_elo: int, current_league: int) -> Optional[tuple[League, Bot]]:
@@ -140,7 +166,16 @@ class BossSystem:
         Returns:
             Tuple (peut_defier, message, boss_bot)
         """
-        current_league = League.from_index(user.league)
+        # Récupérer le bot actif de l'utilisateur pour déterminer sa league
+        player_bot = Bot.query.filter_by(
+            user_id=user.id,
+            is_active=True
+        ).order_by(Bot.elo_rating.desc()).first()
+        
+        if not player_bot:
+            return False, "Vous devez avoir un bot actif pour défier le Boss", None
+        
+        current_league = League.from_index(player_bot.league)
         
         # Si déjà Gold, pas de Boss à défier
         if current_league == League.GOLD:
@@ -154,9 +189,9 @@ class BossSystem:
         boss_elo = boss_config['elo']
         
         # Le joueur doit avoir un ELO au moins égal au Boss
-        if user.elo_rating < boss_elo:
-            elo_needed = boss_elo - user.elo_rating
-            return False, f"ELO insuffisant. Il vous manque {elo_needed} points pour défier le {boss_config['name']} (requis: {boss_elo}, actuel: {user.elo_rating})", None
+        if player_bot.elo_rating < boss_elo:
+            elo_needed = boss_elo - player_bot.elo_rating
+            return False, f"ELO insuffisant. Il vous manque {elo_needed} points pour défier le {boss_config['name']} (requis: {boss_elo}, actuel: {player_bot.elo_rating})", None
         
         # Récupérer le Bot Boss
         boss = cls.get_boss_for_league(current_league)
@@ -166,11 +201,12 @@ class BossSystem:
         return True, f"Vous pouvez défier le {boss_config['name']} !", boss
     
     @classmethod
-    def check_promotion_after_boss_match(cls, user: User, beat_boss: bool) -> tuple[bool, str]:
+    def check_promotion_after_boss_match(cls, user: User, player_bot: Bot, beat_boss: bool) -> tuple[bool, str]:
         """Vérifie et applique la promotion après un match contre un Boss.
         
         Args:
             user: L'utilisateur qui a joué
+            player_bot: Le bot du joueur qui a combattu
             beat_boss: True si le joueur a battu le Boss
             
         Returns:
@@ -179,7 +215,10 @@ class BossSystem:
         if not beat_boss:
             return False, "Vous devez battre le Boss pour être promu."
         
-        current_league = League.from_index(user.league)
+        if not player_bot:
+            return False, "Bot non trouvé."
+        
+        current_league = League.from_index(player_bot.league)
         
         # Si déjà Gold, pas de promotion possible
         if current_league == League.GOLD:
@@ -189,17 +228,17 @@ class BossSystem:
         next_league = League(current_league + 1)
         next_threshold = LeagueManager.ELO_THRESHOLDS.get(next_league)
         
-        if user.elo_rating < next_threshold:
-            return False, f"ELO insuffisant pour la promotion. Requis: {next_threshold}, actuel: {user.elo_rating}"
+        if player_bot.elo_rating < next_threshold:
+            return False, f"ELO insuffisant pour la promotion. Requis: {next_threshold}, actuel: {player_bot.elo_rating}"
         
         # PROMOTION !
         old_league = current_league.to_name()
-        user.league = int(next_league)
+        player_bot.league = int(next_league)
         db.session.commit()
         
-        logger.info(f"🎉🏆 User {user.username} PROMOTED from {old_league} to {next_league.to_name()} after beating Boss!")
+        logger.info(f"🎉🏆 Bot {player_bot.name} (user {user.username}) PROMOTED from {old_league} to {next_league.to_name()} after beating Boss!")
         
-        return True, f"🎉 Félicitations ! Vous avez été promu en ligue {next_league.to_name()} !"
+        return True, f"🎉 Félicitations ! Votre bot a été promu en ligue {next_league.to_name()} !"
     
     @classmethod
     def initialize_bosses(cls, force_recreate: bool = False) -> Dict[str, Any]:
