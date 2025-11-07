@@ -180,7 +180,8 @@ export default function PlaygroundPage() {
     try {
       await submitToArena(versionName, description)
       setIsModalOpen(false)
-      alert(`✅ Bot soumis à l'arène: ${versionName}`)
+      // Rafraîchir les infos de ligue après soumission
+      fetchUserLeague()
     } catch (e) {
       alert(`❌ Erreur lors de la soumission: ${e.message}`)
     }
@@ -296,9 +297,11 @@ export default function PlaygroundPage() {
                 size="small"
                 showName={true}
               />
-              <span style={{ fontSize: '14px', color: '#888' }}>
-                {leagueInfo.elo} ELO ({leagueInfo.progress_percent}%)
-              </span>
+              {leagueInfo.rank > 0 && leagueInfo.total_bots > 0 && (
+                <span style={{ fontSize: '14px', color: '#888' }}>
+                  Rang {leagueInfo.rank} / {leagueInfo.total_bots}
+                </span>
+              )}
             </div>
           )}
         </div>

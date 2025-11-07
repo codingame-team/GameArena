@@ -57,9 +57,34 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:/
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
-CORS(app, supports_credentials=True, origins='*')
+# Configuration CORS étendue pour Private Network Access
+CORS(app, 
+     supports_credentials=True, 
+     origins='*',
+     allow_headers=['Content-Type', 'Authorization', 'Access-Control-Request-Private-Network'],
+     expose_headers=['Access-Control-Allow-Private-Network'])
 db.init_app(app)
 jwt = JWTManager(app)
+
+# Middleware pour Private Network Access (CORS preflight)
+@app.after_request
+def add_private_network_headers(response):
+    """Ajoute les headers nécessaires pour Private Network Access.
+    
+    Permet les requêtes depuis des domaines publics vers localhost.
+    Voir: https://developer.chrome.com/blog/private-network-access-preflight/
+    """
+    # Si la requête contient le header de demande d'accès au réseau privé
+    if request.headers.get('Access-Control-Request-Private-Network'):
+        response.headers['Access-Control-Allow-Private-Network'] = 'true'
+    
+    # Ajouter les headers CORS standards pour toutes les réponses
+    response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Access-Control-Request-Private-Network'
+    
+    return response
 
 # JWT error handlers
 @jwt.invalid_token_loader
@@ -1057,7 +1082,7 @@ def api_get_leagues():
 @app.route('/api/user/league', methods=['GET'])
 @jwt_required()
 def api_get_user_league():
-    """Get current user's active bot league information."""
+    """Get current user's active bot league information with ranking."""
     user = get_current_user()
     if not user:
         return jsonify({'error': 'User not found'}), 404
@@ -1068,19 +1093,31 @@ def api_get_user_league():
     if not user_bot:
         # Si aucun bot actif, retourner la ligue par défaut (Wood2)
         return jsonify({
-            'league': 'Wood2',
+            'current_league': 'Wood2',
             'league_id': 1,
-            'elo': 800,
+            'elo': 0,  # New bots start at 0 league_elo
+            'rank': 0,
+            'total_bots': 0,
             'has_bot': False
         }), 200
     
     # Récupérer les informations de ligue basées sur l'ELO du bot
     league_info = LeagueManager.get_league_info(user_bot.elo_rating)
-    league_info['has_bot'] = True
-    league_info['bot_id'] = user_bot.id
-    league_info['bot_name'] = user_bot.name
     
-    return jsonify(league_info), 200
+    # Calculer le ranking dans la ligue
+    ranking = get_league_ranking(user_bot.id, user_bot.league)
+    
+    return jsonify({
+        'current_league': league_info['current_league'],
+        'league_id': user_bot.league,
+        'elo': user_bot.league_elo,  # ELO local à la ligue
+        'rank': ranking['rank'],
+        'total_bots': ranking['total_bots'],
+        'progress_percent': league_info.get('progress_percent', 0),  # Deprecated but kept for compatibility
+        'has_bot': True,
+        'bot_id': user_bot.id,
+        'bot_name': user_bot.name
+    }), 200
 
 
 @app.route('/api/leaderboard', methods=['GET'])
@@ -1088,64 +1125,119 @@ def api_get_user_league():
 def api_get_leaderboard():
     """Get leaderboard with league information.
     
+    NEW SYSTEM:
+    - Global leaderboard: All bots (NO BOSS) sorted by league, then by league_elo
+    - League leaderboard: Bots + Boss in specific league, sorted by league_elo
+    
     Query params:
     - league: Filter by league name (wood2, wood1, bronze, silver, gold)
-    - limit: Number of results (default 100)
+              If omitted, returns global leaderboard (all leagues, no Boss)
+    - limit: Number of results per league (default 100)
     """
     league_filter = request.args.get('league', '').lower()
     limit = int(request.args.get('limit', 100))
     
-    # Construire la query sur les Bots (pas les Users)
-    query = Bot.query.filter_by(is_active=True)
-    
-    # Filtrer par ligue si spécifié
     if league_filter:
+        # ============================================================
+        # CLASSEMENT PAR LIGUE: Bots + Boss de la ligue
+        # ============================================================
         try:
-            # Normaliser le nom de la ligue (ex: "wood 2" -> "wood2")
+            # Normaliser le nom de la ligue
             normalized = league_filter.replace(' ', '').lower()
             if normalized == 'wood':
-                normalized = 'wood2'  # Rétrocompatibilité
+                normalized = 'wood2'
             
             league = League.from_name(normalized)
-            query = query.filter(Bot.league == int(league))
-        except:
-            pass
+            
+            # Récupérer tous les bots de la ligue (y compris Boss)
+            bots = Bot.query.filter_by(
+                league=int(league),
+                is_active=True
+            ).order_by(Bot.league_elo.desc()).limit(limit).all()
+            
+            # Construire la liste des entrées
+            entries = []
+            for bot in bots:
+                owner = User.query.get(bot.user_id)
+                league_obj = League.from_index(bot.league)
+                
+                entries.append({
+                    'bot_id': bot.id,
+                    'bot_name': bot.name,
+                    'username': owner.username if owner else 'Unknown',
+                    'elo': bot.league_elo,  # ELO local à la ligue
+                    'league': league_obj.to_name(),
+                    'league_index': bot.league,
+                    'avatar': owner.avatar if owner else 'my_bot',
+                    'is_boss': bot.is_boss,
+                    'matches': bot.match_count,
+                    'wins': bot.win_count,
+                    'win_rate': round((bot.win_count / bot.match_count * 100), 1) if bot.match_count > 0 else 0.0
+                })
+            
+            return jsonify({
+                'leaderboard': entries,
+                'league': league.to_name(),
+                'total': len(entries)
+            }), 200
+            
+        except Exception as e:
+            logging.getLogger(__name__).exception('Error getting league leaderboard')
+            return jsonify({'error': 'Invalid league'}), 400
     
-    # Trier par ELO
-    bots = query.order_by(Bot.elo_rating.desc()).limit(limit).all()
-    
-    # Construire la liste des entrées avec infos owner
-    all_entries = []
-    
-    for bot in bots:
-        owner = User.query.get(bot.user_id)
-        league_info = LeagueManager.get_league_info(bot.elo_rating)
-        league_obj = League.from_index(bot.league)
+    else:
+        # ============================================================
+        # CLASSEMENT GLOBAL: Tous les bots (SANS Boss), groupés par ligue
+        # ============================================================
+        # Récupérer tous les bots actifs NON-BOSS
+        bots = Bot.query.filter_by(
+            is_active=True,
+            is_boss=False  # EXCLURE les Boss du classement global
+        ).all()
         
-        all_entries.append({
-            'bot_id': bot.id,
-            'bot_name': bot.name,
-            'username': owner.username if owner else 'Unknown',
-            'elo': bot.elo_rating,
-            'league': league_obj.to_name(),
-            'league_index': bot.league,
-            'avatar': owner.avatar if owner else 'my_bot',
-            'is_boss': bot.is_boss,
-            'matches': bot.match_count,
-            'wins': bot.win_count,
-            'win_rate': round((bot.win_count / bot.match_count * 100), 1) if bot.match_count > 0 else 0.0
-        })
-    
-    # Trier par ELO décroissant
-    all_entries.sort(key=lambda x: x['elo'], reverse=True)
-    
-    # Limiter et ajouter les rangs
-    leaderboard = []
-    for rank, entry in enumerate(all_entries[:limit], 1):
-        entry['rank'] = rank
-        leaderboard.append(entry)
-    
-    return jsonify({'leaderboard': leaderboard}), 200
+        # Grouper par ligue et trier
+        entries_by_league = {}
+        for league in League:
+            entries_by_league[int(league)] = []
+        
+        for bot in bots:
+            owner = User.query.get(bot.user_id)
+            league_obj = League.from_index(bot.league)
+            
+            entries_by_league[bot.league].append({
+                'bot_id': bot.id,
+                'bot_name': bot.name,
+                'username': owner.username if owner else 'Unknown',
+                'elo': bot.league_elo,  # ELO local à la ligue
+                'league': league_obj.to_name(),
+                'league_index': bot.league,
+                'avatar': owner.avatar if owner else 'my_bot',
+                'is_boss': False,
+                'matches': bot.match_count,
+                'wins': bot.win_count,
+                'win_rate': round((bot.win_count / bot.match_count * 100), 1) if bot.match_count > 0 else 0.0
+            })
+        
+        # Trier chaque ligue par league_elo décroissant
+        for league_id in entries_by_league:
+            entries_by_league[league_id].sort(key=lambda x: x['elo'], reverse=True)
+        
+        # Construire la liste finale : Gold -> Silver -> Bronze -> Wood1 -> Wood2
+        all_entries = []
+        for league in reversed(list(League)):  # Du plus haut (Gold) au plus bas (Wood2)
+            league_entries = entries_by_league[int(league)][:limit]  # Limiter par ligue
+            all_entries.extend(league_entries)
+        
+        # Ajouter les rangs (global, tous les bots confondus)
+        leaderboard = []
+        for rank, entry in enumerate(all_entries, 1):
+            entry['rank'] = rank
+            leaderboard.append(entry)
+        
+        return jsonify({
+            'leaderboard': leaderboard,
+            'total': len(leaderboard)
+        }), 200
 
 
 # ==================== BOT/ARENA ENDPOINTS ====================
@@ -1372,6 +1464,48 @@ def api_save_bot_code(bot_id):
         return jsonify({'error': 'Internal server error'}), 500
 
 
+# ============================================================
+# HELPER: League Ranking
+# ============================================================
+
+def get_league_ranking(bot_id, league_level):
+    """Calculate bot's rank within its league.
+    
+    Args:
+        bot_id: ID of the bot to rank
+        league_level: League index (1-5)
+    
+    Returns:
+        dict: {
+            'rank': int,          # Bot's position (1=best)
+            'total_bots': int,    # Total bots in league
+            'league_elo': int     # Bot's ELO in this league
+        }
+    """
+    # Récupérer tous les bots de la ligue (triés par league_elo décroissant)
+    bots_in_league = Bot.query.filter_by(
+        league=league_level,
+        is_active=True
+    ).order_by(Bot.league_elo.desc()).all()
+    
+    total_bots = len(bots_in_league)
+    rank = 0
+    bot_league_elo = 0
+    
+    # Trouver le rang du bot
+    for i, bot in enumerate(bots_in_league, start=1):
+        if bot.id == bot_id:
+            rank = i
+            bot_league_elo = bot.league_elo
+            break
+    
+    return {
+        'rank': rank,
+        'total_bots': total_bots,
+        'league_elo': bot_league_elo
+    }
+
+
 def _execute_arena_match(game_id, player_bot_id, opponent_bot_id, is_placement_match=False):
     """Execute a complete arena match and update ELO ratings.
     
@@ -1564,16 +1698,16 @@ def api_submit_bot_to_arena(bot_id):
             )
         ).order_by(Bot.elo_rating.asc()).all()
         
-        # Le Boss sera dans league_opponents, triés par ELO avec les autres
+        # Le Boss sera dans league_opponents, triés par league_elo avec les autres
         boss = BossSystem.get_boss_for_league(player_league)  # Pour logging
         
-        # Initialiser l'ELO du nouveau bot à celui du bot le plus faible de la ligue
-        if league_opponents:
-            player_bot.elo_rating = league_opponents[0].elo_rating
-            db.session.commit()
-            logging.getLogger(__name__).info(
-                f"Bot {player_bot.name} initialized to ELO {player_bot.elo_rating} (weakest in {player_league.to_name()})"
-            )
+        # NOUVEAU SYSTÈME: Reset league_elo à 0 pour chaque nouvelle soumission
+        # Le bot commence toujours avec league_elo=0 dans sa ligue actuelle
+        player_bot.league_elo = 0
+        db.session.commit()
+        logging.getLogger(__name__).info(
+            f"Bot {player_bot.name} starting fresh in {player_league.to_name()} with league_elo=0"
+        )
         
         # ============================================================
         # SYSTÈME DE PLACEMENT SIMPLIFIÉ
@@ -1633,7 +1767,7 @@ def api_submit_bot_to_arena(bot_id):
                             'opponent': opponent.name,
                             'opponent_elo': opponent.elo_rating,
                             'result': result.get('winner') if result else 'error',
-                            'new_elo': player_bot.elo_rating,
+                            'new_elo': player_bot.league_elo,  # Use league_elo
                             'phase': 'preparation',
                             'is_boss': False,
                             'match_number': match_num
@@ -1642,23 +1776,23 @@ def api_submit_bot_to_arena(bot_id):
                         total_matches_played += 1
                         
                         logging.getLogger(__name__).info(
-                            f"  Match {match_num}/{PREPARATION_MATCHES} vs {opponent.name} (ELO {opponent.elo_rating}): "
-                            f"{result.get('winner')} → Bot ELO now {player_bot.elo_rating}"
+                            f"  Match {match_num}/{PREPARATION_MATCHES} vs {opponent.name} (League ELO {opponent.league_elo}): "
+                            f"{result.get('winner')} → Bot League ELO now {player_bot.league_elo}"
                         )
                         
                     except Exception as e:
                         logging.getLogger(__name__).exception(f"Error in preparation match vs {opponent.name}")
                 
                 logging.getLogger(__name__).info(
-                    f"✅ PHASE 1 Complete: Bot ELO now {player_bot.elo_rating} (after {PREPARATION_MATCHES} matches)"
+                    f"✅ PHASE 1 Complete: Bot League ELO now {player_bot.league_elo} (after {PREPARATION_MATCHES} matches)"
                 )
             
             # ============================================================
             # PHASE 2: CHALLENGE BOSS (continue tant que ratio > 50%)
             # ============================================================
             # Règles:
-            # 1. Promotion si: ELO bot > ELO Boss ET victoire contre Boss
-            # 2. Continue tant que: ELO bot <= ELO Boss OU ratio >= 50%
+            # 1. Promotion si: League ELO bot > League ELO Boss ET victoire contre Boss
+            # 2. Continue tant que: League ELO bot <= League ELO Boss OU ratio >= 50%
             # 3. Arrêt si: Après 10 combats minimum, ratio V/D < 50%
             # ============================================================
             
@@ -1669,13 +1803,13 @@ def api_submit_bot_to_arena(bot_id):
                     f"👑 PHASE 2: Boss Challenge (continue while ratio > 50%)"
                 )
                 logging.getLogger(__name__).info(
-                    f"  Boss: {boss_bot.name} (ELO {boss_bot.elo_rating})"
+                    f"  Boss: {boss_bot.name} (League ELO {boss_bot.league_elo})"
                 )
                 logging.getLogger(__name__).info(
-                    f"  Rule 1: Promotion if Bot ELO > Boss ELO AND win against Boss"
+                    f"  Rule 1: Promotion if Bot League ELO > Boss League ELO AND win against Boss"
                 )
                 logging.getLogger(__name__).info(
-                    f"  Rule 2: Continue while Bot ELO <= Boss ELO OR win rate >= {MIN_WIN_RATE*100}%"
+                    f"  Rule 2: Continue while Bot League ELO <= Boss League ELO OR win rate >= {MIN_WIN_RATE*100}%"
                 )
                 logging.getLogger(__name__).info(
                     f"  Rule 3: Stop if after {MIN_BOSS_FIGHTS_CHECK} fights, win rate < {MIN_WIN_RATE*100}%"
@@ -1708,9 +1842,9 @@ def api_submit_bot_to_arena(bot_id):
                         
                         placement_results.append({
                             'opponent': boss_bot.name,
-                            'opponent_elo': boss_bot.elo_rating,
+                            'opponent_elo': boss_bot.league_elo,  # Use league_elo
                             'result': result.get('winner') if result else 'error',
-                            'new_elo': player_bot.elo_rating,
+                            'new_elo': player_bot.league_elo,  # Use league_elo
                             'phase': 'boss_challenge',
                             'is_boss': True,
                             'match_number': boss_attempts,
@@ -1724,12 +1858,12 @@ def api_submit_bot_to_arena(bot_id):
                         # Logs détaillés
                         if player_won:
                             logging.getLogger(__name__).info(
-                                f"  🎉 Match {boss_attempts}: WIN! Bot ELO {player_bot.elo_rating} vs Boss {boss_bot.elo_rating} "
+                                f"  🎉 Match {boss_attempts}: WIN! Bot League ELO {player_bot.league_elo} vs Boss {boss_bot.league_elo} "
                                 f"(W/L: {boss_wins}/{boss_losses}, ratio: {win_rate*100:.1f}%)"
                             )
                         else:
                             logging.getLogger(__name__).info(
-                                f"  ❌ Match {boss_attempts}: LOSE. Bot ELO {player_bot.elo_rating} vs Boss {boss_bot.elo_rating} "
+                                f"  ❌ Match {boss_attempts}: LOSE. Bot League ELO {player_bot.league_elo} vs Boss {boss_bot.league_elo} "
                                 f"(W/L: {boss_wins}/{boss_losses}, ratio: {win_rate*100:.1f}%)"
                             )
                         
@@ -1737,30 +1871,30 @@ def api_submit_bot_to_arena(bot_id):
                         # VÉRIFICATION DES CONDITIONS DE PROMOTION OU ARRÊT
                         # ============================================================
                         
-                        # Condition 1: ELO > Boss ET victoire → PROMOTION!
-                        if player_bot.elo_rating > boss_bot.elo_rating and player_won:
+                        # Condition 1: League ELO > Boss ET victoire → PROMOTION!
+                        if player_bot.league_elo > boss_bot.league_elo and player_won:
                             logging.getLogger(__name__).info(
                                 f"✅ PROMOTION CRITERIA MET!"
                             )
                             logging.getLogger(__name__).info(
-                                f"   - Bot ELO {player_bot.elo_rating} > Boss ELO {boss_bot.elo_rating} ✓"
+                                f"   - Bot League ELO {player_bot.league_elo} > Boss League ELO {boss_bot.league_elo} ✓"
                             )
                             logging.getLogger(__name__).info(
                                 f"   - Victory against Boss ✓"
                             )
                             break
                         
-                        # Condition 2: ELO > Boss mais défaite → Continue
-                        if player_bot.elo_rating > boss_bot.elo_rating and not player_won:
+                        # Condition 2: League ELO > Boss mais défaite → Continue
+                        if player_bot.league_elo > boss_bot.league_elo and not player_won:
                             logging.getLogger(__name__).info(
-                                f"⚠️ Bot ELO > Boss but lost. Need victory for promotion. Continuing..."
+                                f"⚠️ Bot League ELO > Boss but lost. Need victory for promotion. Continuing..."
                             )
                             continue
                         
-                        # Condition 3: ELO <= Boss → Continue tant que ratio bon
-                        if player_bot.elo_rating <= boss_bot.elo_rating:
+                        # Condition 3: League ELO <= Boss → Continue tant que ratio bon
+                        if player_bot.league_elo <= boss_bot.league_elo:
                             logging.getLogger(__name__).info(
-                                f"📈 Bot ELO {player_bot.elo_rating} <= Boss {boss_bot.elo_rating}. Training continues..."
+                                f"📈 Bot League ELO {player_bot.league_elo} <= Boss {boss_bot.league_elo}. Training continues..."
                             )
                             
                             # Vérification ratio après MIN_BOSS_FIGHTS_CHECK combats
@@ -1785,7 +1919,7 @@ def api_submit_bot_to_arena(bot_id):
                 
                 # Résumé Boss challenge
                 final_win_rate = boss_wins / boss_attempts if boss_attempts > 0 else 0
-                elo_surpassed = player_bot.elo_rating > boss_bot.elo_rating
+                elo_surpassed = player_bot.league_elo > boss_bot.league_elo
                 
                 logging.getLogger(__name__).info(
                     f"\n🏆 PHASE 2 Complete:"
@@ -1797,7 +1931,7 @@ def api_submit_bot_to_arena(bot_id):
                     f"  - Record: {boss_wins}W - {boss_losses}L (win rate: {final_win_rate*100:.1f}%)"
                 )
                 logging.getLogger(__name__).info(
-                    f"  - Bot ELO: {player_bot.elo_rating} vs Boss: {boss_bot.elo_rating} "
+                    f"  - Bot League ELO: {player_bot.league_elo} vs Boss: {boss_bot.league_elo} "
                     f"({'✓ SURPASSED' if elo_surpassed else '✗ BELOW'})"
                 )
         
@@ -1805,7 +1939,7 @@ def api_submit_bot_to_arena(bot_id):
         # PHASE 3: PROMOTION (double condition)
         # ============================================================
         # Promotion si:
-        #   1. Bot ELO > Boss ELO (dépassement du gardien)
+        #   1. Bot League ELO > Boss League ELO (dépassement du gardien)
         #   2. ET victoire contre Boss (preuve de compétence)
         # ============================================================
         
@@ -1827,14 +1961,14 @@ def api_submit_bot_to_arena(bot_id):
         win_condition = False
         
         if boss_in_league:
-            elo_condition = player_bot.elo_rating > boss_in_league.elo_rating
-            # Vérifier si la DERNIÈRE victoire était contre le Boss ET que ELO > Boss à ce moment
+            elo_condition = player_bot.league_elo > boss_in_league.league_elo  # Use league_elo
+            # Vérifier si la DERNIÈRE victoire était contre le Boss ET que League ELO > Boss à ce moment
             boss_results = [r for r in placement_results if r.get('is_boss')]
             if boss_results:
                 last_boss_result = boss_results[-1]
-                # Promotion si dernière tentative = victoire ET ELO > Boss
+                # Promotion si dernière tentative = victoire ET League ELO > Boss
                 win_condition = (last_boss_result.get('result') == 'player' and 
-                                last_boss_result.get('new_elo', 0) > boss_in_league.elo_rating)
+                                last_boss_result.get('new_elo', 0) > boss_in_league.league_elo)
         
         if not player_bot.is_boss:
             if elo_condition and win_condition:
@@ -1843,6 +1977,9 @@ def api_submit_bot_to_arena(bot_id):
                 if new_league_value > player_bot.league:
                     player_bot.league = new_league_value
                     new_league = League.from_index(new_league_value)
+                    
+                    # RESET league_elo à 0 pour la nouvelle ligue
+                    player_bot.league_elo = 0
                     db.session.commit()
                     promoted = True
                     
@@ -1850,7 +1987,7 @@ def api_submit_bot_to_arena(bot_id):
                         f"\n🎉 PROMOTION! Bot {player_bot.name}: {old_league.to_name()} → {new_league.to_name()}"
                     )
                     logging.getLogger(__name__).info(
-                        f"   ✓ Bot ELO {player_bot.elo_rating} > Boss ELO {boss_in_league.elo_rating if boss_in_league else 'N/A'}"
+                        f"   ✓ Bot League ELO {player_bot.league_elo} (reset to 0 in new league)"
                     )
                     logging.getLogger(__name__).info(
                         f"   ✓ Victory against Boss achieved"
@@ -1866,11 +2003,11 @@ def api_submit_bot_to_arena(bot_id):
                 )
                 if not elo_condition:
                     logging.getLogger(__name__).info(
-                        f"   ✗ Bot ELO {player_bot.elo_rating} <= Boss ELO {boss_in_league.elo_rating if boss_in_league else 'N/A'}"
+                        f"   ✗ Bot League ELO {player_bot.league_elo} <= Boss League ELO {boss_in_league.league_elo if boss_in_league else 'N/A'}"
                     )
                 else:
                     logging.getLogger(__name__).info(
-                        f"   ✓ Bot ELO {player_bot.elo_rating} > Boss ELO {boss_in_league.elo_rating if boss_in_league else 'N/A'}"
+                        f"   ✓ Bot League ELO {player_bot.league_elo} > Boss League ELO {boss_in_league.league_elo if boss_in_league else 'N/A'}"
                     )
                 
                 if not win_condition:

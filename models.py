@@ -55,9 +55,15 @@ class Bot(db.Model):
     Only when explicitly submitted to Arena does it create a BotVersion record.
     
     Bot-specific fields:
-    - elo_rating: Bot's skill rating (determines matchmaking and league)
+    - elo_rating: Bot's global skill rating (historical, for reference)
+    - league_elo: Bot's ELO within current league (reset to 0 on league promotion)
     - league: Current league (1=Wood2, 2=Wood1, 3=Bronze, 4=Silver, 5=Gold)
     - is_boss: True for Boss bots (league locked, can't be promoted/demoted)
+    
+    NEW SYSTEM: ELO is now per-league, not global.
+    - Each bot starts with league_elo=0 when entering a new league
+    - Boss ELO is dynamic (no fixed thresholds)
+    - Ranking is calculated within each league (rank/total_bots)
     """
     __tablename__ = 'bots'
     
@@ -68,7 +74,8 @@ class Bot(db.Model):
     referee_type = db.Column(db.String(50), default='pacman')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    elo_rating = db.Column(db.Integer, default=800)  # Starting ELO (Wood2)
+    elo_rating = db.Column(db.Integer, default=800)  # Global ELO (historical, for reference)
+    league_elo = db.Column(db.Integer, default=0)  # ELO within current league (reset on promotion)
     league = db.Column(db.Integer, default=1)  # League level (1=Wood2, 2=Wood1, 3=Bronze, 4=Silver, 5=Gold)
     match_count = db.Column(db.Integer, default=0)
     win_count = db.Column(db.Integer, default=0)
@@ -85,10 +92,11 @@ class Bot(db.Model):
         """Convert bot to dictionary.
         
         Avatar comes from the bot's owner (User.avatar).
-        League info is calculated from bot's ELO rating.
+        League info now uses league_elo (local to league) instead of global elo_rating.
         """
         from leagues import LeagueManager
         
+        # Note: league_info will be deprecated - we use league_elo now
         league_info = LeagueManager.get_league_info(self.elo_rating)
         
         result = {
@@ -100,10 +108,11 @@ class Bot(db.Model):
             'referee_type': self.referee_type,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
-            'elo_rating': self.elo_rating,
+            'elo_rating': self.elo_rating,  # Global ELO (historical)
+            'league_elo': self.league_elo,  # ELO within current league
             'league': self.league,
             'league_name': league_info['current_league'],
-            'league_progress': league_info['progress_percent'],
+            'league_progress': league_info['progress_percent'],  # Will be deprecated
             'match_count': self.match_count,
             'win_count': self.win_count,
             'win_rate': round((self.win_count / self.match_count * 100), 1) if self.match_count > 0 else 0.0,

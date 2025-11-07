@@ -6,7 +6,9 @@
  * SOLID: Séparation entre composants UI et logique réseau
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
+// Utiliser la même config que le reste de l'app (proxy Vite en dev)
+import API_BASE_URL from '../config';
+const API_BASE = API_BASE_URL;
 
 /**
  * Récupère le token JWT depuis localStorage
