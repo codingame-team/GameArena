@@ -37,7 +37,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     FLASK_APP=app.py \
     FLASK_ENV=production \
-    PORT=3000
+    PORT=5000
 
 # Installer dépendances système
 RUN apt-get update && apt-get install -y \
@@ -85,11 +85,11 @@ COPY --chown=gamearena:gamearena instance/ ./instance/
 USER gamearena
 
 # Exposer le port
-EXPOSE 3000
+EXPOSE 5000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3000/api/referees || exit 1
+    CMD curl -f http://localhost:5000/api/referees || exit 1
 
 # Commande de démarrage
 CMD ["python3", "app.py"]

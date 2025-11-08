@@ -44,7 +44,9 @@ def set_console_tracing(enabled: bool):
     if enabled:
         logger.setLevel(logging.DEBUG)
     else:
-        logger.setLevel(logging.WARNING)
+        # Set INFO as the default visible level so INFO logs (like the image
+        # name) appear in standard logs even when tracing is not enabled.
+        logger.setLevel(logging.INFO)
     LAST_RUN_DEBUG['console_tracing'] = bool(enabled)
 
 def is_console_tracing_enabled() -> bool:
@@ -208,19 +210,36 @@ def run_bot_in_docker(bot_code: str, input_str: str, timeout_ms: int = 50, memor
         # Determine which image to use (allow customization)
         image = os.environ.get('BOT_DOCKER_IMAGE', 'python:3.11-slim')
 
+        # Always record the image requested so callers can inspect it via
+        # get_last_run_debug() even when per-run checks are not enabled.
+        LAST_RUN_DEBUG['image'] = image
+
+        # Also emit a debug log entry showing the image used for this run.
+        # The message will be visible when console tracing is enabled.
+        logger.debug("docker image for run_bot_in_docker: %s", image)
+
+        # Emit an INFO-level log so the image is recorded in standard logs
+        # even when debug tracing is not enabled. To see this message, ensure
+        # your logging configuration allows INFO for this logger (or set
+        # DOCKER_RUNNER_TRACE=1 to enable DEBUG output).
+        logger.info("docker image for run_bot_in_docker: %s", image)
+
         # Check docker availability and pull image only if per-run checks are enabled.
         if collect_debug:
             try:
                 subprocess.run(['docker', '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             except Exception as e:
-                return '', f'docker-not-available: {e}', -1
+                # Include the image name in the returned status so callers know which
+                # image we attempted to use when docker was not available.
+                return '', f'docker-not-available (image={image}): {e}', -1
 
             # Try to pull the specified image to reduce first-run latency and surface pull errors
             try:
                 subprocess.run(['docker', 'pull', image], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             except Exception:
                 # If pull fails, continue; docker run may still work if the image is local
-                pass
+                LAST_RUN_DEBUG['pull_failed'] = True
+                LAST_RUN_DEBUG['pull_image'] = image
 
         # Build docker run command using the chosen image
         # Use --entrypoint to ensure we run python3 with the script path reliably

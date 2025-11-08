@@ -9,7 +9,7 @@ services:
     container_name: gamearena-app
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "5000:5000"
     environment:
       # Flask Configuration
       - FLASK_ENV=production
@@ -44,7 +44,7 @@ services:
       - gamearena-network
     
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/referees"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/referees"]
       interval: 30s
       timeout: 5s
       retries: 3

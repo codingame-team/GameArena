@@ -1,0 +1,30 @@
+<svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Wood 1 Boss - Intermédiaire (couleur standard bois) -->
+  <defs>
+    <linearGradient id="wood1Gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#A0826D;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8B4513;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Cercle de base avec gradient -->
+  <circle cx="64" cy="64" r="60" fill="url(#wood1Gradient)" stroke="#654321" stroke-width="2"/>
+  
+  <!-- Double étoile (plus d'étoiles = niveau intermédiaire) -->
+  <path d="M 54,32 L 56,42 L 66,43 L 58,50 L 60,60 L 54,55 L 48,60 L 50,50 L 42,43 L 52,42 Z" fill="#654321"/>
+  <path d="M 74,32 L 76,42 L 86,43 L 78,50 L 80,60 L 74,55 L 68,60 L 70,50 L 62,43 L 72,42 Z" fill="#654321"/>
+  
+  <!-- Emoji 🪵 représenté par des rondins de bois -->
+  <g transform="translate(44, 72)">
+    <!-- Rondin principal -->
+    <rect x="5" y="10" width="30" height="15" rx="7" fill="#A0826D" stroke="#654321" stroke-width="1"/>
+    <!-- Anneaux de croissance -->
+    <ellipse cx="12" cy="17.5" rx="4" ry="5" fill="none" stroke="#654321" stroke-width="0.8"/>
+    <ellipse cx="28" cy="17.5" rx="4" ry="5" fill="none" stroke="#654321" stroke-width="0.8"/>
+    <!-- Détails texture bois -->
+    <line x1="20" y1="12" x2="20" y2="23" stroke="#8B4513" stroke-width="1" opacity="0.4"/>
+  </g>
+  
+  <!-- Texte BOSS -->
+  <text x="64" y="108" font-size="14" font-weight="bold" text-anchor="middle" fill="#654321" font-family="Arial">WOOD 1</text>
+</svg>
