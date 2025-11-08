@@ -4,16 +4,23 @@ import time
 import sys
 
 FREEBOX_URL = "http://mafreebox.freebox.fr"
+APP_ID = "fr.gamearena.deploy"
 
 def request_authorization():
     """Demander l'autorisation à la Freebox"""
     url = f"{FREEBOX_URL}/api/v8/login/authorize/"
     
     app_info = {
-        "app_id": "fr.gamearena.deploy",
+        "app_id": APP_ID,
         "app_name": "GameArena Deploy",
         "app_version": "1.0.0",
-        "device_name": "MacBook Display"
+        "device_name": "MacBook Display",
+        "app_permissions": {
+            "settings": {
+                "value": True,
+                "desc": "Modification des réglages de la Freebox (requis pour Wake-on-LAN)"
+            }
+        }
     }
     
     print("📡 Demande d'autorisation à la Freebox...")
