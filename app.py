@@ -43,7 +43,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name
 # Ensure Flask and werkzeug loggers propagate at INFO level
 logging.getLogger('werkzeug').setLevel(logging.INFO)
 
-app = Flask(__name__, static_folder='static', static_url_path='/static')
+app = Flask(__name__, static_folder=None)  # Désactiver le static folder automatique
 # Ensure app logger level
 app.logger.setLevel(logging.INFO)
 
@@ -53,7 +53,7 @@ app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-key-
 app.config['JWT_TOKEN_LOCATION'] = ['headers']
 app.config['JWT_HEADER_NAME'] = 'Authorization'
 app.config['JWT_HEADER_TYPE'] = 'Bearer'
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///gamearena.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///instance/gamearena.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -473,27 +473,44 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
 
 # -------------------- HTTP endpoints --------------------
 
-@app.route('/')
-def index():
-    ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    ua_string = request.headers.get('User-Agent', '')
-    os = 'Unknown'
-    browser = 'Unknown'
-    if 'Windows' in ua_string:
-        os = 'Windows'
-    elif 'Mac' in ua_string or 'Darwin' in ua_string:
-        os = 'macOS'
-    elif 'Linux' in ua_string:
-        os = 'Linux'
-    if 'Chrome' in ua_string:
-        browser = 'Chrome'
-    elif 'Firefox' in ua_string:
-        browser = 'Firefox'
-    elif 'Safari' in ua_string:
-        browser = 'Safari'
-    date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    logging.getLogger(__name__).info('Client connected: IP=%s, OS=%s, Browser=%s, Date=%s', ip, os, browser, date)
-    return send_from_directory('static', 'index.html')
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def index(path):
+    """
+    Route principale qui sert index.html pour toutes les routes SPA React Router.
+    Gère aussi le logging des connexions clientes et les fichiers statiques.
+    """
+    STATIC_DIR = 'static'
+    
+    # Si le path demandé correspond à un fichier statique existant, le servir
+    if path and not path.startswith('api/'):
+        static_file = os.path.join(STATIC_DIR, path)
+        if os.path.exists(static_file) and os.path.isfile(static_file):
+            return send_from_directory(STATIC_DIR, path)
+    
+    # Logging des connexions (seulement pour la route racine)
+    if not path:
+        ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        ua_string = request.headers.get('User-Agent', '')
+        client_os = 'Unknown'
+        browser = 'Unknown'
+        if 'Windows' in ua_string:
+            client_os = 'Windows'
+        elif 'Mac' in ua_string or 'Darwin' in ua_string:
+            client_os = 'macOS'
+        elif 'Linux' in ua_string:
+            client_os = 'Linux'
+        if 'Chrome' in ua_string:
+            browser = 'Chrome'
+        elif 'Firefox' in ua_string:
+            browser = 'Firefox'
+        elif 'Safari' in ua_string:
+            browser = 'Safari'
+        date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        logging.getLogger(__name__).info('Client connected: IP=%s, OS=%s, Browser=%s, Date=%s', ip, client_os, browser, date)
+    
+    # Servir index.html pour toutes les routes React Router
+    return send_from_directory(STATIC_DIR, 'index.html')
 
 
 @app.route('/api/referees')
@@ -2574,4 +2591,4 @@ _wrap_step_for_arena()
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
-    app.run(host='127.0.0.1', port=3000, debug=True)
+    app.run(host='0.0.0.0', port=3000, debug=True)
