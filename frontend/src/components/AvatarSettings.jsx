@@ -1,22 +1,11 @@
 import React, { useState, useEffect } from 'react'
-import axios from 'axios'
 import { useAuth } from '../contexts/AuthContext'
-import API_BASE_URL from '../config'
-
-// Liste des avatars disponibles
-const AVAILABLE_AVATARS = [
-  { id: 'my_bot', name: 'Robot', file: 'my_bot.svg' },
-  { id: 'boss', name: 'Boss', file: 'boss.svg' },
-  { id: 'ninja', name: 'Ninja', file: 'ninja.svg' },
-  { id: 'warrior', name: 'Guerrier', file: 'warrior.svg' },
-  { id: 'wizard', name: 'Magicien', file: 'wizard.svg' },
-  { id: 'knight', name: 'Chevalier', file: 'knight.svg' },
-  { id: 'archer', name: 'Archer', file: 'archer.svg' },
-  { id: 'alien', name: 'Alien', file: 'alien.svg' },
-]
+import { useErrorHandler } from '../hooks/useErrorHandler'
+import avatarService, { AVAILABLE_AVATARS } from '../services/avatarService'
 
 export default function AvatarSettings() {
   const { user } = useAuth()
+  const { error, handleError, clearError } = useErrorHandler()
   const [selectedAvatar, setSelectedAvatar] = useState('my_bot')
   const [customAvatarUrl, setCustomAvatarUrl] = useState(null)
   const [uploadedFile, setUploadedFile] = useState(null)
@@ -24,69 +13,46 @@ export default function AvatarSettings() {
   const [isUploading, setIsUploading] = useState(false)
   const [message, setMessage] = useState(null)
 
-  // Charger l'avatar actuel de l'utilisateur
   useEffect(() => {
     async function loadCurrentAvatar() {
       try {
-        const res = await axios.get(`${API_BASE_URL}/api/user/avatar`)
-        if (res.data && res.data.avatar) {
-          setSelectedAvatar(res.data.avatar)
-          // Si c'est un avatar custom, charger l'image via blob
-          if (res.data.avatar.startsWith('custom_')) {
-            try {
-              const imageRes = await axios.get(`${API_BASE_URL}/api/user/avatar/image`, {
-                responseType: 'blob'
-              })
-              const blobUrl = URL.createObjectURL(imageRes.data)
-              setCustomAvatarUrl(blobUrl)
-            } catch (imgError) {
-              console.error('Erreur lors du chargement de l\'image custom:', imgError)
-            }
+        const data = await avatarService.getCurrentAvatar()
+        if (data?.avatar) {
+          setSelectedAvatar(data.avatar)
+          if (data.avatar.startsWith('custom_')) {
+            const blob = await avatarService.getAvatarImage()
+            const url = avatarService.createBlobUrl(blob)
+            setCustomAvatarUrl(url)
           }
         }
-      } catch (error) {
-        console.error('Erreur lors du chargement de l\'avatar:', error)
-        // Si l'endpoint n'existe pas encore, utiliser l'avatar par défaut
-        if (error.response?.status !== 404) {
-          setMessage({ type: 'error', text: 'Impossible de charger votre avatar actuel' })
+      } catch (err) {
+        if (err.response?.status !== 404) {
+          handleError(err, 'Impossible de charger votre avatar actuel')
         }
       }
     }
     loadCurrentAvatar()
     
-    // Cleanup blob URL on unmount
-    return () => {
-      if (customAvatarUrl && customAvatarUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(customAvatarUrl)
-      }
-    }
+    return () => avatarService.revokeAllBlobUrls()
   }, [])
 
   const handleFileSelect = (event) => {
     const file = event.target.files[0]
     if (!file) return
 
-    // Vérifier le type de fichier
-    if (!file.type.startsWith('image/')) {
-      setMessage({ type: 'error', text: '❌ Veuillez sélectionner une image (PNG, JPG, GIF, etc.)' })
-      return
+    try {
+      avatarService.validateFile(file)
+      setUploadedFile(file)
+      
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        setCustomAvatarUrl(e.target.result)
+        setSelectedAvatar('custom_upload')
+      }
+      reader.readAsDataURL(file)
+    } catch (err) {
+      setMessage({ type: 'error', text: `❌ ${err.message}` })
     }
-
-    // Vérifier la taille (max 2MB)
-    if (file.size > 2 * 1024 * 1024) {
-      setMessage({ type: 'error', text: '❌ L\'image est trop grande (max 2MB)' })
-      return
-    }
-
-    setUploadedFile(file)
-    
-    // Créer une prévisualisation
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      setCustomAvatarUrl(e.target.result)
-      setSelectedAvatar('custom_upload')
-    }
-    reader.readAsDataURL(file)
   }
 
   const handleUploadAvatar = async () => {
@@ -96,38 +62,21 @@ export default function AvatarSettings() {
     setMessage(null)
 
     try {
-      const formData = new FormData()
-      formData.append('avatar', uploadedFile)
-
-      await axios.post(`${API_BASE_URL}/api/user/avatar/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      })
-
+      await avatarService.uploadAvatar(uploadedFile)
       setMessage({ type: 'success', text: '✅ Avatar personnalisé uploadé avec succès !' })
       setUploadedFile(null)
       
-      // Recharger l'avatar avec l'image blob
-      const res = await axios.get(`${API_BASE_URL}/api/user/avatar`)
-      if (res.data && res.data.avatar) {
-        setSelectedAvatar(res.data.avatar)
-        
-        // Si c'est un avatar custom, charger l'image via blob
-        if (res.data.avatar.startsWith('custom_')) {
-          const imageRes = await axios.get(`${API_BASE_URL}/api/user/avatar/image`, {
-            responseType: 'blob'
-          })
-          // Révoquer l'ancien blob URL s'il existe
-          if (customAvatarUrl && customAvatarUrl.startsWith('blob:')) {
-            URL.revokeObjectURL(customAvatarUrl)
-          }
-          const blobUrl = URL.createObjectURL(imageRes.data)
-          setCustomAvatarUrl(blobUrl)
+      const data = await avatarService.getCurrentAvatar()
+      if (data?.avatar) {
+        setSelectedAvatar(data.avatar)
+        if (data.avatar.startsWith('custom_')) {
+          avatarService.revokeBlobUrl(customAvatarUrl)
+          const blob = await avatarService.getAvatarImage()
+          setCustomAvatarUrl(avatarService.createBlobUrl(blob))
         }
       }
-    } catch (error) {
-      console.error('Erreur lors de l\'upload de l\'avatar:', error)
+    } catch (err) {
+      handleError(err, 'Erreur lors de l\'upload de l\'avatar')
       setMessage({ type: 'error', text: '❌ Erreur lors de l\'upload de l\'avatar' })
     } finally {
       setIsUploading(false)
@@ -136,7 +85,6 @@ export default function AvatarSettings() {
   }
 
   const handleSaveAvatar = async () => {
-    // Si un fichier est en attente d'upload, l'uploader d'abord
     if (uploadedFile) {
       await handleUploadAvatar()
       return
@@ -146,30 +94,18 @@ export default function AvatarSettings() {
     setMessage(null)
     
     try {
-      await axios.post(`${API_BASE_URL}/api/user/avatar`, {
-        avatar: selectedAvatar
-      })
+      await avatarService.saveAvatar(selectedAvatar)
       setMessage({ type: 'success', text: '✅ Avatar sauvegardé avec succès !' })
-    } catch (error) {
-      console.error('Erreur lors de la sauvegarde de l\'avatar:', error)
+    } catch (err) {
+      handleError(err, 'Erreur lors de la sauvegarde de l\'avatar')
       setMessage({ type: 'error', text: '❌ Erreur lors de la sauvegarde de l\'avatar' })
     } finally {
       setIsSaving(false)
-      // Effacer le message après 3 secondes
       setTimeout(() => setMessage(null), 3000)
     }
   }
 
-  const getAvatarUrl = () => {
-    if (selectedAvatar === 'custom_upload' && customAvatarUrl) {
-      return customAvatarUrl
-    }
-    if (selectedAvatar.startsWith('custom_')) {
-      return `${API_BASE_URL}/api/user/avatar/image`
-    }
-    const avatarInfo = AVAILABLE_AVATARS.find(a => a.id === selectedAvatar)
-    return `/avatars/${avatarInfo?.file || 'my_bot.svg'}`
-  }
+  const getAvatarUrl = () => avatarService.getAvatarUrl(selectedAvatar, customAvatarUrl)
 
   return (
     <div className="avatar-settings">

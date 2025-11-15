@@ -16,17 +16,21 @@ export default function LoginForm() {
     setError('')
     setLoading(true)
 
-    const result = await login(username, password)
-    
-    if (result.success) {
-      // Redirect to the specified page or default to arena
-      const redirectTo = searchParams.get('redirect') || '/arena'
-      navigate(redirectTo)
-    } else {
-      setError(result.error)
+    try {
+      const result = await login(username, password)
+      
+      if (result.success) {
+        const redirectTo = searchParams.get('redirect') || '/arena'
+        navigate(redirectTo)
+      } else {
+        setError(result.error || 'Échec de la connexion')
+      }
+    } catch (err) {
+      setError('Erreur de connexion. Veuillez réessayer.')
+      console.error('Login error:', err)
+    } finally {
+      setLoading(false)
     }
-    
-    setLoading(false)
   }
 
   const redirectFrom = searchParams.get('redirect')

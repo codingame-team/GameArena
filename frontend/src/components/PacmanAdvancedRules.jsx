@@ -24,7 +24,7 @@ import {
  */
 export default function PacmanAdvancedRules({ league = 'gold' }) {
   // Normaliser la casse (backend retourne "Silver", "Bronze", etc.)
-  const normalizedLeague = league.toLowerCase()
+  const normalizedLeague = (league || 'gold').toLowerCase()
   
   // Helper pour les conditions cumulatives (progressive disclosure)
   const isBronzeOrAbove = ['bronze', 'silver', 'gold'].includes(normalizedLeague)
@@ -102,7 +102,7 @@ export default function PacmanAdvancedRules({ league = 'gold' }) {
 
         <SubSection title="Les Pacs" emoji="🔵🔴">
           <Paragraph>
-            {league === 'wood' ? (
+            {normalizedLeague === 'wood' ? (
               <>Chaque joueur contrôle <Const>1 pac</Const>.</>
             ) : (
               <>Chaque joueur contrôle jusqu'à <Const>5 pacs</Const> simultanément.</>

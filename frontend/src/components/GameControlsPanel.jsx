@@ -137,7 +137,7 @@ export default function GameControlsPanel({
           {botId ? (
             <>
               Bot ID: {botId}
-              {botVersionInfo.latest_version_number > 0 ? (
+              {botVersionInfo?.latest_version_number > 0 ? (
                 <span className="version-status submitted">
                   v{botVersionInfo.latest_version_number} in Arena
                 </span>

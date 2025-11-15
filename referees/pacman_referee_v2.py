@@ -135,6 +135,7 @@ class Pac:
         self.ability_cooldown = 0  # tours avant de pouvoir réutiliser ability
         self.dead = False
         self.message = ''
+        self.path = []  # Chemin parcouru ce tour pour animation
     
     def can_use_ability(self) -> bool:
         """Peut utiliser une ability si pas en cooldown."""
@@ -176,7 +177,8 @@ class Pac:
             'speed': self.speed,
             'ability_duration': self.ability_duration,
             'ability_cooldown': self.ability_cooldown,
-            'dead': self.dead
+            'dead': self.dead,
+            'path': [list(p) for p in self.path] if self.path else [list(self.position)]
         }
 
 class PacmanRefereeV2(Referee):
@@ -285,26 +287,44 @@ class PacmanRefereeV2(Referee):
         else:
             types = [PacType.ROCK, PacType.PAPER, PacType.SCISSORS]
         
-        pac_id = 1  # Commencer à 1 pour player
+        # Trouver des positions valides (couloirs) à gauche et à droite
+        left_positions = []
+        right_positions = []
         
-        # Player pacs (gauche) - IDs 1 à pacs_per_player
+        for y in range(1, self.height - 1):
+            for x in range(1, self.width // 2):
+                if self.grid[y][x] == ' ':
+                    left_positions.append((x, y))
+            for x in range(self.width // 2 + 1, self.width - 1):
+                if self.grid[y][x] == ' ':
+                    right_positions.append((x, y))
+        
+        # Trier par distance au bord pour avoir des positions proches des côtés
+        left_positions.sort(key=lambda pos: pos[0])
+        right_positions.sort(key=lambda pos: self.width - pos[0])
+        
+        # Répartir verticalement
+        left_positions.sort(key=lambda pos: pos[1])
+        right_positions.sort(key=lambda pos: pos[1])
+        
+        pac_id = 1
+        
+        # Player pacs (gauche)
+        step = max(1, len(left_positions) // (self.pacs_per_player + 1))
         for i in range(self.pacs_per_player):
-            x = 2
-            # Répartition verticale uniforme
-            y = 2 + i * ((self.height - 4) // max(1, self.pacs_per_player - 1)) if self.pacs_per_player > 1 else self.height // 2
-            y = min(y, self.height - 3)  # Sécurité
+            idx = min((i + 1) * step, len(left_positions) - 1)
+            pos = left_positions[idx]
             pac_type = types[i % len(types)]
-            self.pacs[pac_id] = Pac(pac_id, 'player', (x, y), pac_type)
+            self.pacs[pac_id] = Pac(pac_id, 'player', pos, pac_type)
             pac_id += 1
         
-        # Opponent pacs (droite) - IDs pacs_per_player+1 à 2*pacs_per_player
+        # Opponent pacs (droite)
+        step = max(1, len(right_positions) // (self.pacs_per_player + 1))
         for i in range(self.pacs_per_player):
-            x = self.width - 3
-            # Mêmes positions Y que player pour symétrie parfaite
-            y = 2 + i * ((self.height - 4) // max(1, self.pacs_per_player - 1)) if self.pacs_per_player > 1 else self.height // 2
-            y = min(y, self.height - 3)
+            idx = min((i + 1) * step, len(right_positions) - 1)
+            pos = right_positions[idx]
             pac_type = types[i % len(types)]
-            self.pacs[pac_id] = Pac(pac_id, 'opponent', (x, y), pac_type)
+            self.pacs[pac_id] = Pac(pac_id, 'opponent', pos, pac_type)
             pac_id += 1
     
     def _place_cherries(self):
@@ -642,11 +662,14 @@ class PacmanRefereeV2(Referee):
                     }
         
         # Phase 3: Résolution des mouvements avec gestion des collisions
-        # Sauvegarder positions de départ
+        # Sauvegarder positions de départ et initialiser path
         old_positions = {pac_id: self.pacs[pac_id].position for pac_id in self.pacs.keys()}
+        for pac in self.pacs.values():
+            pac.path = [pac.position]  # Commencer avec position actuelle
         
         # Calculer les mouvements pour chaque pac (1 case à la fois)
         for move_step in range(2):  # Max 2 steps pour SPEED
+            # Au step 1 (move_step=1), seuls les pacs avec SPEED peuvent bouger
             # Calculer les nouvelles positions pour ce step
             step_moves = {}
             for pac_id, intent in intentions.items():
@@ -654,6 +677,9 @@ class PacmanRefereeV2(Referee):
                     continue
                 pac = self.pacs[pac_id]
                 if pac.dead:
+                    continue
+                # Au 2ème step, seuls les pacs avec speed > 1 peuvent bouger
+                if move_step == 1 and pac.speed <= 1:
                     continue
                 if move_step >= intent['steps']:
                     continue
@@ -742,6 +768,7 @@ class PacmanRefereeV2(Referee):
             for pac_id, new_pos in step_moves.items():
                 pac = self.pacs[pac_id]
                 pac.position = new_pos
+                pac.path.append(new_pos)  # Enregistrer dans le chemin
                 stdout += f"{pac.owner}: Pac {pac_id} moved to {new_pos}\n"
         
         # Phase 4: Tuer les pacs qui ont perdu lors de collisions (combat)

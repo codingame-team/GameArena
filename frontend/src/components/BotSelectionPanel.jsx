@@ -176,6 +176,13 @@ function PlayerSelectionModal({
   onSelectBot, 
   onClose 
 }) {
+  const getBotConfig = (bot) => ({
+    uniqueKey: bot.is_boss ? `boss-${bot.id}` : `bot-${bot.id}`,
+    botId: `bot:${bot.id}`,
+    backgroundColor: bot.is_boss ? "#fff9e6" : "#e8f5e9",
+    borderColorHover: bot.is_boss ? "#ffd700" : "#4a90e2"
+  })
+
   return (
     <div 
       style={{
@@ -207,23 +214,20 @@ function PlayerSelectionModal({
         <h3 style={{ margin: '0 0 16px 0' }}>{title}</h3>
         
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-          {/* All bots including Boss */}
           {availableBots.map(bot => {
-            // Utiliser une clé unique basée sur is_boss pour éviter les collisions
-            const uniqueKey = bot.is_boss ? `boss-${bot.id}` : `bot-${bot.id}`
-            const botId = `bot:${bot.id}`
+            const config = getBotConfig(bot)
             
             return (
               <BotOption
-                key={uniqueKey}
-                botId={botId}
+                key={config.uniqueKey}
+                botId={config.botId}
                 name={bot.name}
-                avatarUrl={getAvatarUrl(botId)}
+                avatarUrl={getAvatarUrl(config.botId)}
                 eloRating={bot.elo_rating}
-                isSelected={selectedPlayer === botId}
-                backgroundColor={bot.is_boss ? "#fff9e6" : "#e8f5e9"}
-                borderColorHover={bot.is_boss ? "#ffd700" : "#4a90e2"}
-                onSelect={() => onSelectBot(botId)}
+                isSelected={selectedPlayer === config.botId}
+                backgroundColor={config.backgroundColor}
+                borderColorHover={config.borderColorHover}
+                onSelect={() => onSelectBot(config.botId)}
               />
             )
           })}
@@ -262,9 +266,47 @@ function BotOption({
   borderColorHover,
   onSelect 
 }) {
+  const handleMouseEnter = (e) => {
+    try {
+      e.currentTarget.style.transform = 'scale(1.05)'
+      e.currentTarget.style.borderColor = borderColorHover
+    } catch (err) {
+      console.error('Erreur lors du survol:', err)
+    }
+  }
+
+  const handleMouseLeave = (e) => {
+    try {
+      e.currentTarget.style.transform = 'scale(1)'
+      e.currentTarget.style.borderColor = '#ddd'
+    } catch (err) {
+      console.error('Erreur lors de la sortie du survol:', err)
+    }
+  }
+
+  const handleImageError = (e) => {
+    try {
+      e.target.src = '/avatars/no_avatar.svg'
+    } catch (err) {
+      console.error('Erreur lors du chargement de l\'avatar de secours:', err)
+    }
+  }
+
+  const handleClick = () => {
+    try {
+      if (typeof onSelect === 'function') {
+        onSelect()
+      } else {
+        console.error('onSelect n\'est pas une fonction')
+      }
+    } catch (err) {
+      console.error('Erreur lors de la sélection du bot:', err)
+    }
+  }
+
   return (
     <div
-      onClick={onSelect}
+      onClick={handleClick}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -277,20 +319,14 @@ function BotOption({
         transition: 'all 0.2s',
         background: isSelected ? backgroundColor : 'white'
       }}
-      onMouseEnter={(e) => { 
-        e.currentTarget.style.transform = 'scale(1.05)'
-        e.currentTarget.style.borderColor = borderColorHover
-      }}
-      onMouseLeave={(e) => { 
-        e.currentTarget.style.transform = 'scale(1)'
-        e.currentTarget.style.borderColor = '#ddd'
-      }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       <img 
         src={avatarUrl}
         alt={name}
         style={{ width: '64px', height: '64px', objectFit: 'cover', borderRadius: '4px' }}
-        onError={(e) => { e.target.src = '/avatars/no_avatar.svg' }}
+        onError={handleImageError}
       />
       <div style={{ 
         fontSize: botId === 'Boss' ? '12px' : '11px', 

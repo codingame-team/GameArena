@@ -8,72 +8,90 @@
 
 import React from 'react';
 
+function CollapseButton({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        color: '#888',
+        cursor: 'pointer',
+        fontSize: '12px',
+        padding: '4px 8px'
+      }}
+      onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+      onMouseLeave={(e) => e.currentTarget.style.color = '#888'}
+    >
+      ▲ Réduire
+    </button>
+  );
+}
+
+const LEAGUE_RULES = {
+  Wood: {
+    pacs: '1 pac par joueur',
+    fog: '❌ Désactivé (vision complète)',
+    abilities: '❌ Aucune ability',
+    deadPacs: '❌ Non fourni',
+    cherries: '2 cherries'
+  },
+  Bronze: {
+    pacs: '2-3 pacs par joueur',
+    fog: '❌ Désactivé (vision complète)',
+    abilities: '❌ Aucune ability',
+    deadPacs: '❌ Non fourni',
+    cherries: '4 cherries'
+  },
+  Silver: {
+    pacs: '3-4 pacs par joueur',
+    fog: '✅ Activé (vision limitée)',
+    abilities: '✅ SPEED & SWITCH disponibles',
+    deadPacs: '❌ Non fourni',
+    cherries: '6 cherries'
+  },
+  Gold: {
+    pacs: '3-5 pacs par joueur',
+    fog: '✅ Activé (vision limitée)',
+    abilities: '✅ SPEED & SWITCH disponibles',
+    deadPacs: '✅ Informations sur pacs morts',
+    cherries: '8+ cherries'
+  }
+};
+
 export default function LeagueRules({ leagueInfo, compact = false, collapsible = true }) {
   const [isExpanded, setIsExpanded] = React.useState(false);
   
-  if (!leagueInfo) return null;
+  if (!leagueInfo?.current_league) return null;
 
   const leagueName = leagueInfo.current_league;
+  const rules = LEAGUE_RULES[leagueName];
   
-  // Règles par ligue (synchronisé avec leagues.py)
-  const getRules = () => {
-    switch (leagueName) {
-      case 'Wood':
-        return {
-          pacs: '1 pac par joueur',
-          fog: '❌ Désactivé (vision complète)',
-          abilities: '❌ Aucune ability',
-          deadPacs: '❌ Non fourni',
-          cherries: '2 cherries'
-        };
-      case 'Bronze':
-        return {
-          pacs: '2-3 pacs par joueur',
-          fog: '❌ Désactivé (vision complète)',
-          abilities: '❌ Aucune ability',
-          deadPacs: '❌ Non fourni',
-          cherries: '4 cherries'
-        };
-      case 'Silver':
-        return {
-          pacs: '3-4 pacs par joueur',
-          fog: '✅ Activé (vision limitée)',
-          abilities: '✅ SPEED & SWITCH disponibles',
-          deadPacs: '❌ Non fourni',
-          cherries: '6 cherries'
-        };
-      case 'Gold':
-        return {
-          pacs: '3-5 pacs par joueur',
-          fog: '✅ Activé (vision limitée)',
-          abilities: '✅ SPEED & SWITCH disponibles',
-          deadPacs: '✅ Informations sur pacs morts',
-          cherries: '8+ cherries'
-        };
-      default:
-        return null;
-    }
-  };
-
-  const rules = getRules();
   if (!rules) return null;
+
+  const handleExpand = () => collapsible && setIsExpanded(true);
+  const handleCollapse = () => setIsExpanded(false);
+  const handleMouseEnter = (e, hoverBg) => collapsible && (e.currentTarget.style.background = hoverBg);
+  const handleMouseLeave = (e, defaultBg) => collapsible && (e.currentTarget.style.background = defaultBg);
+
+  const compactStyle = {
+    padding: '8px 12px',
+    background: 'var(--bg-tertiary, #2a2a2a)',
+    borderRadius: '6px',
+    fontSize: '13px',
+    color: '#aaa',
+    cursor: collapsible ? 'pointer' : 'default',
+    transition: 'all 0.2s ease'
+  };
 
   if (compact && !isExpanded) {
     return (
       <div 
         className="league-rules-compact" 
-        style={{
-          padding: '8px 12px',
-          background: 'var(--bg-tertiary, #2a2a2a)',
-          borderRadius: '6px',
-          fontSize: '13px',
-          color: '#aaa',
-          cursor: collapsible ? 'pointer' : 'default',
-          transition: 'all 0.2s ease'
-        }}
-        onClick={() => collapsible && setIsExpanded(true)}
-        onMouseEnter={(e) => collapsible && (e.currentTarget.style.background = '#333')}
-        onMouseLeave={(e) => collapsible && (e.currentTarget.style.background = '#2a2a2a')}
+        style={compactStyle}
+        onClick={handleExpand}
+        onMouseEnter={(e) => handleMouseEnter(e, '#333')}
+        onMouseLeave={(e) => handleMouseLeave(e, '#2a2a2a')}
       >
         <div style={{ 
           marginBottom: '4px', 
@@ -112,21 +130,7 @@ export default function LeagueRules({ leagueInfo, compact = false, collapsible =
           📜 Règles de la ligue {leagueName}
         </span>
         {compact && collapsible && (
-          <button
-            onClick={() => setIsExpanded(false)}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#888',
-              cursor: 'pointer',
-              fontSize: '12px',
-              padding: '4px 8px'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
-            onMouseLeave={(e) => e.currentTarget.style.color = '#888'}
-          >
-            ▲ Réduire
-          </button>
+          <CollapseButton onClick={handleCollapse} />
         )}
       </h3>
       

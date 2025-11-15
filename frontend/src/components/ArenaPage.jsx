@@ -7,17 +7,31 @@ import LeagueBadge from './LeagueBadge'
 import LeagueProgress from './LeagueProgress'
 import useLeague from '../hooks/useLeague'
 
+const NAV_TABS = [
+  { id: 'leaderboard', icon: '🏆', label: 'Classement' },
+  { id: 'my-bots', icon: '🤖', label: 'Mes Bots' },
+  { id: 'settings', icon: '⚙️', label: 'Paramètres' },
+  { id: 'playground', icon: '🎯', label: 'Terrain de jeu', action: () => window.location.href = '/' }
+]
+
 export default function ArenaPage() {
   const [activeTab, setActiveTab] = useState('leaderboard')
   const { user, logout } = useAuth()
   const { userLeague, fetchUserLeague, loading: leagueLoading } = useLeague()
 
-  // Charger les données de ligue au mount
   useEffect(() => {
     if (user) {
       fetchUserLeague()
     }
   }, [user, fetchUserLeague])
+
+  const handleTabClick = (tab) => {
+    if (tab.action) {
+      tab.action()
+    } else {
+      setActiveTab(tab.id)
+    }
+  }
 
   return (
     <div className="arena-page">
@@ -26,30 +40,15 @@ export default function ArenaPage() {
           <h1>🎮 GameArena</h1>
         </div>
         <div className="arena-nav-tabs">
-          <button
-            className={activeTab === 'leaderboard' ? 'active' : ''}
-            onClick={() => setActiveTab('leaderboard')}
-          >
-            🏆 Classement
-          </button>
-          <button
-            className={activeTab === 'my-bots' ? 'active' : ''}
-            onClick={() => setActiveTab('my-bots')}
-          >
-            🤖 Mes Bots
-          </button>
-          <button
-            className={activeTab === 'settings' ? 'active' : ''}
-            onClick={() => setActiveTab('settings')}
-          >
-            ⚙️ Paramètres
-          </button>
-          <button
-            className={activeTab === 'playground' ? 'active' : ''}
-            onClick={() => window.location.href = '/'}
-          >
-            🎯 Terrain de jeu
-          </button>
+          {NAV_TABS.map(tab => (
+            <button
+              key={tab.id}
+              className={activeTab === tab.id ? 'active' : ''}
+              onClick={() => handleTabClick(tab)}
+            >
+              {tab.icon} {tab.label}
+            </button>
+          ))}
         </div>
         <div className="arena-nav-user">
           <div className="user-info-container">

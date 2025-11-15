@@ -8,10 +8,14 @@ export default function MyBots() {
   const [bots, setBots] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [botVersions, setBotVersions] = useState({}) // Store versions per bot ID
-  const [expandedBot, setExpandedBot] = useState(null) // Track which bot's versions are expanded
-  const [viewingCode, setViewingCode] = useState(null) // { botId, versionNumber, code, versionName }
+  const [botVersions, setBotVersions] = useState({})
+  const [expandedBot, setExpandedBot] = useState(null)
+  const [viewingCode, setViewingCode] = useState(null)
   const { user } = useAuth()
+
+  const getAuthHeaders = () => ({
+    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+  })
 
   useEffect(() => {
     fetchBots()
@@ -19,10 +23,7 @@ export default function MyBots() {
 
   const fetchBots = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get(`${API_BASE_URL}/api/bots/my`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const response = await axios.get(`${API_BASE_URL}/api/bots/my`, getAuthHeaders())
       setBots(response.data || [])
       setError('')
     } catch (err) {
@@ -34,10 +35,7 @@ export default function MyBots() {
 
   const fetchBotVersions = async (botId) => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get(`${API_BASE_URL}/api/bots/${botId}/versions`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const response = await axios.get(`${API_BASE_URL}/api/bots/${botId}/versions`, getAuthHeaders())
       setBotVersions(prev => ({ ...prev, [botId]: response.data.versions || [] }))
     } catch (err) {
       console.error('Erreur lors du chargement des versions:', err)
@@ -57,10 +55,9 @@ export default function MyBots() {
 
   const handleViewCode = async (botId, versionNumber, versionName) => {
     try {
-      const token = localStorage.getItem('token')
       const response = await axios.get(
         `${API_BASE_URL}/api/bots/${botId}/versions/${versionNumber}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        getAuthHeaders()
       )
       setViewingCode({
         botId,
@@ -75,11 +72,10 @@ export default function MyBots() {
 
   const handleLoadVersion = async (botId, versionNumber) => {
     try {
-      const token = localStorage.getItem('token')
       await axios.post(
         `${API_BASE_URL}/api/bots/${botId}/load-version/${versionNumber}`,
         {},
-        { headers: { Authorization: `Bearer ${token}` } }
+        getAuthHeaders()
       )
       alert(`Version ${versionNumber} chargée dans le Playground !`)
       window.location.href = '/'
@@ -90,11 +86,12 @@ export default function MyBots() {
 
   const handleChallenge = async (botId) => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/arena/challenge`, {
-        my_bot_id: botId
-      })
-      const gameId = response.data.game_id
-      window.location.href = `/?game=${gameId}`
+      const response = await axios.post(
+        `${API_BASE_URL}/api/arena/challenge`,
+        { my_bot_id: botId },
+        getAuthHeaders()
+      )
+      window.location.href = `/?game=${response.data.game_id}`
     } catch (err) {
       alert(err.response?.data?.error || 'Erreur lors du lancement du match')
     }

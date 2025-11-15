@@ -1,6 +1,33 @@
 import React from 'react'
 import MonacoEditor from './MonacoEditor'
 
+const SAVE_STATUS_CONFIG = {
+  saved: { color: '#0a0', icon: '✓', text: 'Saved' },
+  saving: { color: '#fa0', icon: '⏳', text: 'Saving...' },
+  error: { color: '#c00', icon: '✗', text: 'Save error' }
+}
+
+function SaveStatusFooter({ saveStatus, botId }) {
+  const statusConfig = SAVE_STATUS_CONFIG[saveStatus]
+  
+  return (
+    <div style={{ 
+      fontSize: '10px', 
+      color: '#666', 
+      display: 'flex', 
+      gap: '10px',
+      alignItems: 'center' 
+    }}>
+      {botId && <span>Bot ID: {botId}</span>}
+      {statusConfig && (
+        <span style={{ color: statusConfig.color }}>
+          {statusConfig.icon} {statusConfig.text}
+        </span>
+      )}
+    </div>
+  )
+}
+
 /**
  * Composant panel éditeur de code.
  * 
@@ -30,6 +57,17 @@ export default function EditorPanel({
   saveStatus,
   botId
 }) {
+  const getResetButtonStyle = () => ({
+    fontSize: '12px',
+    padding: '4px 10px',
+    background: '#ff6b6b',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: canReset ? 'pointer' : 'not-allowed',
+    opacity: canReset ? 1 : 0.5
+  })
+
   return (
     <div className="frame" style={{ 
       display: 'flex', 
@@ -57,16 +95,7 @@ export default function EditorPanel({
         <button
           onClick={onReset}
           disabled={!canReset}
-          style={{ 
-            fontSize: '12px', 
-            padding: '4px 10px', 
-            background: '#ff6b6b', 
-            color: 'white', 
-            border: 'none', 
-            borderRadius: '4px', 
-            cursor: canReset ? 'pointer' : 'not-allowed',
-            opacity: canReset ? 1 : 0.5
-          }}
+          style={getResetButtonStyle()}
           title="Reset code to template"
         >
           🔄 Reset my code
@@ -85,26 +114,7 @@ export default function EditorPanel({
       
       {/* Optional save status footer */}
       {(saveStatus !== 'idle' || botId) && (
-        <div style={{ 
-          fontSize: '10px', 
-          color: '#666', 
-          display: 'flex', 
-          gap: '10px',
-          alignItems: 'center' 
-        }}>
-          {botId && <span>Bot ID: {botId}</span>}
-          {saveStatus !== 'idle' && (
-            <span style={{
-              color: saveStatus === 'saved' ? '#0a0' : 
-                     saveStatus === 'saving' ? '#fa0' : 
-                     saveStatus === 'error' ? '#c00' : '#666'
-            }}>
-              {saveStatus === 'saved' ? '✓ Saved' :
-               saveStatus === 'saving' ? '⏳ Saving...' :
-               saveStatus === 'error' ? '✗ Save error' : ''}
-            </span>
-          )}
-        </div>
+        <SaveStatusFooter saveStatus={saveStatus} botId={botId} />
       )}
     </div>
   )

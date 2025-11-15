@@ -323,14 +323,22 @@ export default function PlaygroundPage() {
             marginTop: '4px',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#45a049'
-            e.currentTarget.style.transform = 'translateY(-1px)'
-            e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)'
+            try {
+              e.currentTarget.style.backgroundColor = '#45a049'
+              e.currentTarget.style.transform = 'translateY(-1px)'
+              e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)'
+            } catch (err) {
+              console.error('Erreur lors du survol du lien:', err)
+            }
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = '#4CAF50'
-            e.currentTarget.style.transform = 'translateY(0)'
-            e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)'
+            try {
+              e.currentTarget.style.backgroundColor = '#4CAF50'
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)'
+            } catch (err) {
+              console.error('Erreur lors de la sortie du survol du lien:', err)
+            }
           }}
         >
           <span style={{ fontSize: '18px' }}>🏆</span>

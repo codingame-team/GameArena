@@ -48,8 +48,12 @@ app = Flask(__name__, static_folder=None)  # Désactiver le static folder automa
 app.logger.setLevel(logging.INFO)
 
 # Configuration
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
+import secrets
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
+app.config['WTF_CSRF_ENABLED'] = True
+app.config['WTF_CSRF_TIME_LIMIT'] = None
+app.config['WTF_CSRF_CHECK_DEFAULT'] = False  # Désactiver vérification auto, on vérifie manuellement
 app.config['JWT_TOKEN_LOCATION'] = ['headers']
 app.config['JWT_HEADER_NAME'] = 'Authorization'
 app.config['JWT_HEADER_TYPE'] = 'Bearer'
@@ -61,10 +65,13 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 CORS(app, 
      supports_credentials=True, 
      origins='*',
-     allow_headers=['Content-Type', 'Authorization', 'Access-Control-Request-Private-Network'],
+     allow_headers=['Content-Type', 'Authorization', 'X-CSRF-Token', 'Access-Control-Request-Private-Network'],
      expose_headers=['Access-Control-Allow-Private-Network'])
 db.init_app(app)
 jwt = JWTManager(app)
+
+from flask_wtf.csrf import CSRFProtect
+csrf = CSRFProtect(app)
 
 # Middleware pour Private Network Access (CORS preflight)
 @app.after_request
@@ -471,6 +478,15 @@ def _run_bot_for_role(game: dict, ref: Referee, role: str, bot_cli_input: str, i
 
 
 # -------------------- HTTP endpoints --------------------
+
+@app.route('/api/csrf-token', methods=['GET'])
+def get_csrf_token():
+    from flask_wtf.csrf import generate_csrf
+    token = generate_csrf()
+    response = jsonify({'csrf_token': token})
+    # S'assurer que le cookie de session est défini
+    response.set_cookie('csrf_token', token, samesite='Lax')
+    return response
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -1172,12 +1188,25 @@ def api_get_leaderboard():
             # Récupérer tous les bots actifs et déterminer leur ligue par ELO
             all_bots = Bot.query.filter_by(is_active=True).all()
             
-            # Filtrer les bots de cette ligue (déterminée par leur ELO global)
+            # Filtrer les bots de cette ligue (déterminée par leur ELO global ou ligue assignée pour les boss)
             league_bots = []
             for bot in all_bots:
-                bot_league = LeagueManager.get_league_from_elo(bot.elo_rating)
-                if bot_league == league:
-                    league_bots.append(bot)
+                try:
+                    # Pour les boss, utiliser leur ligue assignée directement
+                    if bot.is_boss and bot.league is not None:
+                        # bot.league peut être un nombre (index) ou un nom
+                        if isinstance(bot.league, int):
+                            bot_league = League(bot.league)
+                        else:
+                            bot_league = League.from_name(bot.league)
+                    else:
+                        bot_league = LeagueManager.get_league_from_elo(bot.elo_rating)
+                    
+                    if bot_league == league:
+                        league_bots.append(bot)
+                except (ValueError, AttributeError, TypeError):
+                    # Ignorer les bots avec ligue invalide
+                    continue
             
             # Trier par league_elo décroissant et limiter
             league_bots.sort(key=lambda b: b.league_elo, reverse=True)
@@ -1187,7 +1216,8 @@ def api_get_leaderboard():
             entries = []
             for rank, bot in enumerate(league_bots, start=1):
                 owner = User.query.get(bot.user_id)
-                league_obj = LeagueManager.get_league_from_elo(bot.elo_rating)
+                # Utiliser la ligue filtrée (celle qui a été déterminée lors du filtrage)
+                league_obj = league
                 
                 entries.append({
                     'rank': rank,

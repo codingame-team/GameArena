@@ -102,6 +102,11 @@ function PixiGrid({
         const hudDataResponse = await fetch('/assets/sprites/HUD.json')
         const hudData = await hudDataResponse.json()
         
+        // Load plasma effect
+        const plasmaTexture = await PIXI.Assets.load('/assets/sprites/plasma.jpg')
+        const plasmaDataResponse = await fetch('/assets/sprites/plasma.json')
+        const plasmaData = await plasmaDataResponse.json()
+        
         // Load background
         const bgTexture = await PIXI.Assets.load('/assets/sprites/BACKGROUND_semi.jpg')
         backgroundRef.current = bgTexture
@@ -111,7 +116,8 @@ function PixiGrid({
           blue: { texture: blueTexture, data: blueData },
           tiles: { texture: tilesTexture, data: tilesData },
           extra: { texture: extraTexture, data: extraData },
-          hud: { texture: hudTexture, data: hudData }
+          hud: { texture: hudTexture, data: hudData },
+          plasma: { texture: plasmaTexture, data: plasmaData }
         }
 
         console.log('✅ Spritesheets chargées avec succès!')
@@ -302,12 +308,18 @@ function PixiGrid({
       gridContainer.removeChildren()
       
       // Render background
-      if (backgroundRef.current && !app.stage.children.find(c => c.isBackground)) {
-        const bg = new PIXI.Sprite(backgroundRef.current)
-        bg.width = app.screen.width
-        bg.height = app.screen.height
-        bg.isBackground = true
-        app.stage.addChildAt(bg, 0)
+      const existingBg = app.stage.children.find(c => c.isBackground)
+      if (backgroundRef.current) {
+        if (!existingBg) {
+          const bg = new PIXI.Sprite(backgroundRef.current)
+          bg.isBackground = true
+          app.stage.addChildAt(bg, 0)
+        }
+        const bg = existingBg || app.stage.children.find(c => c.isBackground)
+        if (bg) {
+          bg.width = app.screen.width
+          bg.height = app.screen.height
+        }
       }
       
       // Render HUD
@@ -367,10 +379,9 @@ function PixiGrid({
     const interval = setInterval(() => {
       setCurrentAnimFrame(prev => {
         const next = (prev + 1) % 8
-        console.log(`Animation frame: ${prev} -> ${next}`)
         return next
       })
-    }, 150)
+    }, 200)
     
     return () => clearInterval(interval)
   }, [isAnimating, isPaused])
@@ -414,9 +425,9 @@ function PixiGrid({
     
     const screenWidth = app.screen.width
     const hudWidth = 530
-    const hudMaxWidth = 350
     const hudOriginalRatio = 529 / 161
     const playerHudZoneWidth = screenWidth / 2
+    const hudMaxWidth = Math.min(530, playerHudZoneWidth - 40)
     const avatarSize = 130
     const avatarRotation = 0.08
     const playerHudNameOffset = 630
@@ -1035,6 +1046,7 @@ function PixiGrid({
 
       if (pacSprite) {
         // Déterminer si le pac est mort via le flag 'dead'
+        console.log(`🔍 Pac ${pac.id}: dead=${pac.dead}, type=${typeof pac.dead}`)
         const isDead = pac.dead === true
         
         if (isDead) {
@@ -1053,8 +1065,17 @@ function PixiGrid({
           if (prevPac && prevPac.position) {
             const returnedToStart = prevPac.position[0] === pac.position[0] && prevPac.position[1] === pac.position[1]
             
-            if (returnedToStart) {
-              // Collision = blocage
+            // Vérifier si bloqué par un autre pac (même case)
+            const blockedByOther = allPacsToRender.some(otherPac => {
+              if ((otherPac.id || otherPac.owner) === (pac.id || pac.owner)) return false
+              if (!otherPac.position) return false
+              const samePosition = otherPac.position[0] === pac.position[0] && otherPac.position[1] === pac.position[1]
+              if (!samePosition) return false
+              // Bloqué si même type ou même owner
+              return otherPac.type === pac.type || otherPac.owner === pac.owner
+            })
+            
+            if (returnedToStart || blockedByOther) {
               animationType = 'blocked'
               animationFrameCount = 4
             }
@@ -1078,7 +1099,7 @@ function PixiGrid({
           
           let frameName
           if (animationType === 'death') {
-            frameName = `paku_${pacColor}_${spriteType}_mort000${frameNum}`
+            frameName = `mort_${pacColor}_${spriteType}_mort000${frameNum}`
           } else if (animationType === 'blocked') {
             frameName = `paku_${pacColor}_${spriteType}_blocked000${frameNum}`
           } else {
@@ -1096,9 +1117,54 @@ function PixiGrid({
           }
         }
 
-        // Positionner le sprite
-        pacSprite.x = x * CELL_SIZE + CELL_SIZE/2
-        pacSprite.y = y * CELL_SIZE + CELL_SIZE/2
+        // Positionner le sprite avec interpolation basée sur le chemin
+        const path = pac.path || [[x, y]]
+        const progress = (currentAnimFrame % 8) / 8  // 0 à 1 sur 8 frames
+        
+        let fromPos, toPos
+        if (path.length > 1) {
+          // Interpoler entre les positions du chemin
+          const segmentIndex = Math.min(Math.floor(progress * (path.length - 1)), path.length - 2)
+          const segmentProgress = (progress * (path.length - 1)) % 1
+          fromPos = path[segmentIndex]
+          toPos = path[segmentIndex + 1]
+          
+          const interpX = fromPos[0] + (toPos[0] - fromPos[0]) * segmentProgress
+          const interpY = fromPos[1] + (toPos[1] - fromPos[1]) * segmentProgress
+          
+          pacSprite.x = interpX * CELL_SIZE + CELL_SIZE/2
+          pacSprite.y = interpY * CELL_SIZE + CELL_SIZE/2
+        } else {
+          // Pas de mouvement
+          pacSprite.x = x * CELL_SIZE + CELL_SIZE/2
+          pacSprite.y = y * CELL_SIZE + CELL_SIZE/2
+        }
+
+        // Effet visuel SPEED (plasma)
+        console.log(`Pac ${pac.id}: speed=${pac.speed}, ability_duration=${pac.ability_duration}`)
+        if (pac.speed > 1 && pac.ability_duration > 0) {
+          console.log(`🔥 Pac ${pac.id} a SPEED actif! Affichage plasma`)
+          const plasmaSheet = spriteSheetsRef.current.plasma
+          if (plasmaSheet?.data?.frames) {
+            const frameNum = String((currentAnimFrame % 78) + 1).padStart(3, '0')
+            const frameName = `plasma_${frameNum}`
+            const plasmaFrame = plasmaSheet.data.frames[frameName]
+            if (plasmaFrame) {
+              const plasmaTexture = new PIXI.Texture({
+                source: plasmaSheet.texture.source,
+                frame: new PIXI.Rectangle(plasmaFrame.frame.x, plasmaFrame.frame.y, plasmaFrame.frame.w, plasmaFrame.frame.h)
+              })
+              const plasmaSprite = new PIXI.Sprite(plasmaTexture)
+              plasmaSprite.x = pacSprite.x
+              plasmaSprite.y = pacSprite.y
+              plasmaSprite.anchor.set(0.5)
+              plasmaSprite.scale.set(CELL_SIZE / plasmaFrame.frame.w)
+              plasmaSprite.alpha = 0.6
+              plasmaSprite.tint = isPlayer ? 0x4444ff : 0xff4444
+              container.addChild(plasmaSprite)
+            }
+          }
+        }
 
         // Orienter le sprite selon la direction (les sprites regardent vers la gauche par défaut)
         const baseScale = Math.abs(pacSprite.scale.x) // Préserver le scale de base
