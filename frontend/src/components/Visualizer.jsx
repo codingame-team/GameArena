@@ -30,7 +30,8 @@ function PixiGrid({
   const controlsContainerRef = useRef(null)
   const progressBarRef = useRef(null)
   const pacsSpritesRef = useRef({})
-  const spriteSheetsRef = useRef({ red: null, blue: null, tiles: null, extra: null })
+  const spriteSheetsRef = useRef({ red: null, blue: null, tiles: null, extra: null, hud: null })
+  const backgroundRef = useRef(null)
   const animationFrameRef = useRef(0)
   const cellSizeRef = useRef(0)
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 })
@@ -95,12 +96,22 @@ function PixiGrid({
         const extraTexture = await PIXI.Assets.load('/assets/sprites/extra.png')
         const extraDataResponse = await fetch('/assets/sprites/extra.json')
         const extraData = await extraDataResponse.json()
+        
+        // Load HUD
+        const hudTexture = await PIXI.Assets.load('/assets/sprites/HUD.png')
+        const hudDataResponse = await fetch('/assets/sprites/HUD.json')
+        const hudData = await hudDataResponse.json()
+        
+        // Load background
+        const bgTexture = await PIXI.Assets.load('/assets/sprites/BACKGROUND_semi.jpg')
+        backgroundRef.current = bgTexture
 
         spriteSheetsRef.current = {
           red: { texture: redTexture, data: redData },
           blue: { texture: blueTexture, data: blueData },
           tiles: { texture: tilesTexture, data: tilesData },
-          extra: { texture: extraTexture, data: extraData }
+          extra: { texture: extraTexture, data: extraData },
+          hud: { texture: hudTexture, data: hudData }
         }
 
         console.log('✅ Spritesheets chargées avec succès!')
@@ -267,8 +278,12 @@ function PixiGrid({
     const controlsContainer = controlsContainerRef.current
 
     if (app && gridContainer && controlsContainer) {
+      const HUD_HEIGHT = 150
       // Resize canvas if needed
-      app.renderer.resize(width * CELL_SIZE + GRID_PADDING * 2, height * CELL_SIZE + GRID_PADDING * 2 + CONTROLS_HEIGHT)
+      app.renderer.resize(width * CELL_SIZE + GRID_PADDING * 2, height * CELL_SIZE + GRID_PADDING * 2 + CONTROLS_HEIGHT + HUD_HEIGHT)
+      
+      // Positionner la grille plus bas pour faire place au HUD
+      gridContainer.y = GRID_PADDING + HUD_HEIGHT
 
       // Ajuster la taille des sprites si CELL_SIZE a changé
       if (cellSizeRef.current !== CELL_SIZE) {
@@ -285,6 +300,19 @@ function PixiGrid({
 
       // Clear and re-render grid
       gridContainer.removeChildren()
+      
+      // Render background
+      if (backgroundRef.current && !app.stage.children.find(c => c.isBackground)) {
+        const bg = new PIXI.Sprite(backgroundRef.current)
+        bg.width = app.screen.width
+        bg.height = app.screen.height
+        bg.isBackground = true
+        app.stage.addChildAt(bg, 0)
+      }
+      
+      // Render HUD
+      renderHUD(app, width * CELL_SIZE, state.scores || {player: 0, opponent: 0}, player1Name, player2Name)
+      
       renderGrid(app, gridContainer, width, height, pellets, cherries, pacsArray, CELL_SIZE, prevState, player1Name, player2Name)
       
       // Détecter les pellets/cherries mangés et créer animations
@@ -310,7 +338,7 @@ function PixiGrid({
       }
 
       // Update controls position and re-render
-      controlsContainer.y = height * CELL_SIZE + GRID_PADDING + 10
+      controlsContainer.y = height * CELL_SIZE + GRID_PADDING + 150 + 10
       controlsContainer.removeChildren()
       renderControls(app, controlsContainer, width * CELL_SIZE, CELL_SIZE)
 
@@ -367,6 +395,152 @@ function PixiGrid({
   }, [currentAnimFrame, spritesLoaded, state])
 
   const animationFrameIndexRef = useRef(0)
+  const hudContainerRef = useRef(null)
+  
+  const renderHUD = (app, gridWidth, scores, player1Name, player2Name) => {
+    const hudSheet = spriteSheetsRef.current.hud
+    
+    if (!hudSheet || !hudSheet.texture || !hudSheet.data) return
+    
+    // Créer ou récupérer le container HUD
+    if (!hudContainerRef.current) {
+      hudContainerRef.current = new PIXI.Container()
+      hudContainerRef.current.zIndex = 1000
+      app.stage.addChild(hudContainerRef.current)
+    }
+    
+    const hudContainer = hudContainerRef.current
+    hudContainer.removeChildren()
+    
+    const screenWidth = app.screen.width
+    const hudWidth = 530
+    const hudMaxWidth = 350
+    const hudOriginalRatio = 529 / 161
+    const playerHudZoneWidth = screenWidth / 2
+    const avatarSize = 130
+    const avatarRotation = 0.08
+    const playerHudNameOffset = 630
+    const playerHudScoreOffset = 320
+    const playerHudAvatarOffset = 882
+    
+    // Calculer les offsets adaptés si la zone est trop petite
+    const maxOffset = Math.max(playerHudNameOffset, playerHudScoreOffset, playerHudAvatarOffset)
+    const scale = Math.min(1, (playerHudZoneWidth - 50) / maxOffset)
+    
+    // HUD Rouge (gauche)
+    const redFrame = hudSheet.data.frames['HUD_Masque_RED']
+    if (redFrame) {
+      const frame = redFrame.frame
+      const texture = new PIXI.Texture({
+        source: hudSheet.texture.source,
+        frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+      })
+      const hudRed = new PIXI.Sprite(texture)
+      hudRed.x = 0
+      hudRed.y = 0
+      const redWidth = Math.min(hudMaxWidth, playerHudZoneWidth - 40)
+      hudRed.width = redWidth
+      hudRed.height = redWidth / hudOriginalRatio
+      hudContainer.addChild(hudRed)
+      
+      // Nom joueur 1 (player)
+      const name1Text = new PIXI.Text({
+        text: player1Name,
+        style: {
+          fontFamily: 'Arial',
+          fontSize: 24,
+          fontWeight: 'bold',
+          fill: 0xffffff
+        }
+      })
+      name1Text.anchor.set(0.5)
+      name1Text.x = Math.max(50, playerHudZoneWidth - playerHudNameOffset * scale)
+      name1Text.y = 18
+      hudContainer.addChild(name1Text)
+      
+      // Score joueur 1
+      const score1Text = new PIXI.Text({
+        text: String(scores.player || 0),
+        style: {
+          fontFamily: 'Arial',
+          fontSize: 36,
+          fontWeight: 'bold',
+          fill: 0xffffff
+        }
+      })
+      score1Text.anchor.set(0.5)
+      score1Text.x = Math.max(100, playerHudZoneWidth - playerHudScoreOffset * scale)
+      score1Text.y = 40
+      hudContainer.addChild(score1Text)
+      
+      // Avatar joueur 1
+      const avatar1 = PIXI.Sprite.from(`https://static.codingame.com/servlet/fileservlet?id=16085713250612&format=viewer_avatar`)
+      avatar1.anchor.set(0.5)
+      avatar1.width = avatarSize
+      avatar1.height = avatarSize
+      avatar1.x = Math.max(avatarSize / 2 + 10, playerHudZoneWidth - playerHudAvatarOffset * scale)
+      avatar1.y = 70
+      avatar1.rotation = -avatarRotation
+      hudContainer.addChild(avatar1)
+    }
+    
+    // HUD Bleu (droite)
+    const blueFrame = hudSheet.data.frames['HUD_Masque_BLUE']
+    if (blueFrame) {
+      const frame = blueFrame.frame
+      const texture = new PIXI.Texture({
+        source: hudSheet.texture.source,
+        frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+      })
+      const hudBlue = new PIXI.Sprite(texture)
+      const blueWidth = Math.min(hudMaxWidth, playerHudZoneWidth - 40)
+      hudBlue.x = screenWidth - blueWidth
+      hudBlue.y = 0
+      hudBlue.width = blueWidth
+      hudBlue.height = blueWidth / hudOriginalRatio
+      hudContainer.addChild(hudBlue)
+      
+      // Nom joueur 2 (opponent)
+      const name2Text = new PIXI.Text({
+        text: player2Name,
+        style: {
+          fontFamily: 'Arial',
+          fontSize: 24,
+          fontWeight: 'bold',
+          fill: 0xffffff
+        }
+      })
+      name2Text.anchor.set(0.5)
+      name2Text.x = Math.min(screenWidth - 50, playerHudZoneWidth + playerHudNameOffset * scale)
+      name2Text.y = 18
+      hudContainer.addChild(name2Text)
+      
+      // Score joueur 2
+      const score2Text = new PIXI.Text({
+        text: String(scores.opponent || 0),
+        style: {
+          fontFamily: 'Arial',
+          fontSize: 36,
+          fontWeight: 'bold',
+          fill: 0xffffff
+        }
+      })
+      score2Text.anchor.set(0.5)
+      score2Text.x = Math.min(screenWidth - 100, playerHudZoneWidth + playerHudScoreOffset * scale)
+      score2Text.y = 40
+      hudContainer.addChild(score2Text)
+      
+      // Avatar joueur 2
+      const avatar2 = PIXI.Sprite.from(`https://static.codingame.com/servlet/fileservlet?id=16085714948312&format=viewer_avatar`)
+      avatar2.anchor.set(0.5)
+      avatar2.width = avatarSize
+      avatar2.height = avatarSize
+      avatar2.x = Math.min(screenWidth - avatarSize / 2 - 10, playerHudZoneWidth + playerHudAvatarOffset * scale)
+      avatar2.y = 70
+      avatar2.rotation = avatarRotation
+      hudContainer.addChild(avatar2)
+    }
+  }
   
   const createSplashAnimation = (container, x, y, size, CELL_SIZE) => {
     const extraSheet = spriteSheetsRef.current.extra
