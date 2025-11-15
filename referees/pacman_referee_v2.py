@@ -184,8 +184,8 @@ class PacmanRefereeV2(Referee):
     
     def __init__(self):
         super().__init__()
-        self.width = 19
-        self.height = 11
+        self.width = 31  # Default au milieu de la plage 28-33
+        self.height = 13  # Default au milieu de la plage 10-15
         self.grid = []  # '#' = wall, ' ' = floor
         self.pellets = set()  # Set de (x, y)
         self.cherries = set()  # Set de (x, y) - valent 10 points
@@ -263,47 +263,46 @@ class PacmanRefereeV2(Referee):
         })
     
     def _generate_walls(self):
-        """Génère quelques murs pour rendre la carte intéressante."""
-        # Bordures
-        for x in range(self.width):
-            self.grid[0][x] = '#'
-            self.grid[self.height - 1][x] = '#'
-        for y in range(self.height):
-            self.grid[y][0] = '#'
-            self.grid[y][self.width - 1] = '#'
+        """Génère un labyrinthe avec l'algorithme Tetris."""
+        from referees.maze_generator import MazeGenerator
         
-        # Quelques obstacles internes (symétrique pour fairness)
-        mid_x = self.width // 2
-        mid_y = self.height // 2
-        
-        # Blocs symétriques
-        for dy in [-2, 2]:
-            for dx in range(-2, 3):
-                if 0 <= mid_y + dy < self.height and 0 <= mid_x + dx < self.width:
-                    self.grid[mid_y + dy][mid_x + dx] = '#'
+        generator = MazeGenerator()
+        self.grid = generator.generate_with_horizontal_symmetry(self.width, self.height)
     
     def _spawn_pacs(self):
-        """Place les pacs aux positions de spawn."""
-        # Types cycliques : ROCK, PAPER, SCISSORS
-        types = [PacType.ROCK, PacType.PAPER, PacType.SCISSORS]
+        """Place les pacs aux positions de spawn.
         
-        pac_id = 0
-        # Player pacs (gauche)
+        Garantit exactement le même nombre de pacs pour chaque équipe
+        avec des positions symétriques.
+        
+        Types utilisés :
+        - NEUTRAL (-1) en ligue Wood (switch_ability_available=False)
+        - ROCK (0), PAPER (1), SCISSORS (2) pour Bronze+ (switch_ability_available=True)
+        """
+        # En Wood: tous NEUTRAL, sinon cycle ROCK/PAPER/SCISSORS
+        if not self.switch_ability_available:
+            types = [PacType.NEUTRAL]
+        else:
+            types = [PacType.ROCK, PacType.PAPER, PacType.SCISSORS]
+        
+        pac_id = 1  # Commencer à 1 pour player
+        
+        # Player pacs (gauche) - IDs 1 à pacs_per_player
         for i in range(self.pacs_per_player):
             x = 2
-            y = 2 + i * 3
-            if y >= self.height - 2:
-                y = self.height - 2 - (i - (self.height // 3))
+            # Répartition verticale uniforme
+            y = 2 + i * ((self.height - 4) // max(1, self.pacs_per_player - 1)) if self.pacs_per_player > 1 else self.height // 2
+            y = min(y, self.height - 3)  # Sécurité
             pac_type = types[i % len(types)]
             self.pacs[pac_id] = Pac(pac_id, 'player', (x, y), pac_type)
             pac_id += 1
         
-        # Opponent pacs (droite) - symétrique
+        # Opponent pacs (droite) - IDs pacs_per_player+1 à 2*pacs_per_player
         for i in range(self.pacs_per_player):
             x = self.width - 3
-            y = 2 + i * 3
-            if y >= self.height - 2:
-                y = self.height - 2 - (i - (self.height // 3))
+            # Mêmes positions Y que player pour symétrie parfaite
+            y = 2 + i * ((self.height - 4) // max(1, self.pacs_per_player - 1)) if self.pacs_per_player > 1 else self.height // 2
+            y = min(y, self.height - 3)
             pac_type = types[i % len(types)]
             self.pacs[pac_id] = Pac(pac_id, 'opponent', (x, y), pac_type)
             pac_id += 1
@@ -334,9 +333,10 @@ class PacmanRefereeV2(Referee):
     
     def get_state(self):
         """Retourne l'état actuel du jeu."""
+        # Inclure TOUS les pacs (vivants et morts) pour permettre l'animation de mort
         state = {
             'turn': self.turn,
-            'pacs': [pac.to_dict() for pac in self.pacs.values() if not pac.dead],
+            'pacs': [pac.to_dict() for pac in self.pacs.values()],
             'pellets': list(self.pellets),
             'cherries': list(self.cherries),
             'scores': self.scores.copy(),
@@ -369,12 +369,8 @@ class PacmanRefereeV2(Referee):
         if self.bot_failed:
             return True
         
-        # Max turns
+        # Max turns (200)
         if self.turn >= self.max_turns:
-            return True
-        
-        # Plus de pellets ni cherries
-        if len(self.pellets) == 0 and len(self.cherries) == 0:
             return True
         
         # Un joueur n'a plus aucun pac vivant
@@ -382,13 +378,17 @@ class PacmanRefereeV2(Referee):
         opponent_alive = any(p.owner == 'opponent' and not p.dead for p in self.pacs.values())
         
         if not player_alive or not opponent_alive:
+            # Accorder toutes les pastilles restantes au survivant
+            remaining = len(self.pellets) + len(self.cherries) * self.cherry_score
+            if not player_alive and opponent_alive:
+                self.scores['opponent'] += remaining
+            elif not opponent_alive and player_alive:
+                self.scores['player'] += remaining
             return True
         
-        # Avance insurmontable
+        # Plus assez de pastilles pour changer l'issue (avance insurmontable)
         remaining = len(self.pellets) + len(self.cherries) * self.cherry_score
-        if self.scores['player'] > self.scores['opponent'] + remaining:
-            return True
-        if self.scores['opponent'] > self.scores['player'] + remaining:
+        if abs(self.scores['player'] - self.scores['opponent']) > remaining:
             return True
         
         return False
@@ -504,7 +504,7 @@ class PacmanRefereeV2(Referee):
         return ' | '.join(normalized) if normalized else ''
     
     def _bfs_path(self, start: Tuple[int, int], target: Tuple[int, int]) -> Optional[List[Tuple[int, int]]]:
-        """Calcule le plus court chemin avec BFS."""
+        """Calcule le plus court chemin avec BFS (supporte wrapping horizontal)."""
         if start == target:
             return [start]
         
@@ -517,7 +517,14 @@ class PacmanRefereeV2(Referee):
             for dx, dy in [(0, -1), (1, 0), (0, 1), (-1, 0)]:
                 nx, ny = x + dx, y + dy
                 
-                if not (0 <= nx < self.width and 0 <= ny < self.height):
+                # Wrapping horizontal (tunnels gauche-droite)
+                if nx < 0:
+                    nx = self.width - 1
+                elif nx >= self.width:
+                    nx = 0
+                
+                # Pas de wrapping vertical
+                if not (0 <= ny < self.height):
                     continue
                 
                 if self.grid[ny][nx] == '#':
@@ -538,15 +545,25 @@ class PacmanRefereeV2(Referee):
     
     def step(self, actions_by_bot: Dict[str, Any]) -> Tuple[Dict[str, Any], str, str]:
         """Exécute un tour de jeu."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         stdout = ''
         stderr = ''
         
-        # Phase 0: Tick des cooldowns AVANT de traiter les commandes
+        # Phase 0: Nettoyage des pacs morts du tour précédent
+        pacs_to_remove = [pac_id for pac_id, pac in self.pacs.items() if pac.dead]
+        if pacs_to_remove:
+            logger.info(f"🧹 Cleaning up dead pacs from previous turn: {pacs_to_remove}")
+            for pac_id in pacs_to_remove:
+                del self.pacs[pac_id]
+        
+        # Phase 1: Décrémenter les compteurs (cooldowns et durées)
         for pac in self.pacs.values():
             if not pac.dead:
                 pac.tick()
         
-        # Phase 1: Parse commands et construire intentions
+        # Phase 2: Exécuter les compétences (SPEED et SWITCH)
         intentions = {}  # pac_id -> {'action': 'MOVE'|'SPEED'|'SWITCH', 'target': ..., 'path': ...}
         
         for bot_id, action_str in actions_by_bot.items():
@@ -555,6 +572,48 @@ class PacmanRefereeV2(Referee):
             
             commands = [c.strip() for c in action_str.split('|') if c.strip()]
             
+            # Traiter SPEED et SWITCH en premier
+            for cmd in commands:
+                parts = cmd.split()
+                if not parts:
+                    continue
+                
+                cmd_type = parts[0].upper()
+                
+                if cmd_type == 'SPEED' and len(parts) >= 2:
+                    if not self.speed_ability_available:
+                        stderr += f"{bot_id}: SPEED ability not available in this league\n"
+                        continue
+                    
+                    pac_id = int(parts[1])
+                    pac = self.pacs.get(pac_id)
+                    
+                    if not pac or pac.dead or pac.owner != bot_id:
+                        continue
+                    
+                    if pac.activate_speed():
+                        stdout += f"{bot_id}: Pac {pac_id} activated SPEED\n"
+                    else:
+                        stderr += f"{bot_id}: Pac {pac_id} cannot use SPEED (cooldown)\n"
+                
+                elif cmd_type == 'SWITCH' and len(parts) >= 3:
+                    if not self.switch_ability_available:
+                        stderr += f"{bot_id}: SWITCH ability not available in this league\n"
+                        continue
+                    
+                    pac_id = int(parts[1])
+                    new_type = int(parts[2])
+                    pac = self.pacs.get(pac_id)
+                    
+                    if not pac or pac.dead or pac.owner != bot_id:
+                        continue
+                    
+                    if pac.switch_type(new_type):
+                        stdout += f"{bot_id}: Pac {pac_id} switched to {PacType.to_string(new_type)}\n"
+                    else:
+                        stderr += f"{bot_id}: Pac {pac_id} cannot SWITCH (cooldown)\n"
+            
+            # Traiter MOVE après (pour utiliser le speed mis à jour)
             for cmd in commands:
                 parts = cmd.split()
                 if not parts:
@@ -579,76 +638,138 @@ class PacmanRefereeV2(Referee):
                     intentions[pac_id] = {
                         'action': 'MOVE',
                         'path': path,
-                        'steps': pac.speed  # 1 ou 2 selon speed boost
+                        'steps': pac.speed  # 1 ou 2 selon speed boost (maintenant à jour)
                     }
-                
-                elif cmd_type == 'SPEED' and len(parts) >= 2:
-                    # Vérifier si SPEED est disponible dans cette ligue
-                    if not self.speed_ability_available:
-                        stderr += f"{bot_id}: SPEED ability not available in this league\n"
-                        continue
-                    
-                    pac_id = int(parts[1])
-                    pac = self.pacs.get(pac_id)
-                    
-                    if not pac or pac.dead or pac.owner != bot_id:
-                        continue
-                    
-                    if pac.activate_speed():
-                        stdout += f"{bot_id}: Pac {pac_id} activated SPEED\n"
-                    else:
-                        stderr += f"{bot_id}: Pac {pac_id} cannot use SPEED (cooldown)\n"
-                
-                elif cmd_type == 'SWITCH' and len(parts) >= 3:
-                    # Vérifier si SWITCH est disponible dans cette ligue
-                    if not self.switch_ability_available:
-                        stderr += f"{bot_id}: SWITCH ability not available in this league\n"
-                        continue
-                    
-                    pac_id = int(parts[1])
-                    new_type = int(parts[2])
-                    pac = self.pacs.get(pac_id)
-                    
-                    if not pac or pac.dead or pac.owner != bot_id:
-                        continue
-                    
-                    if pac.switch_type(new_type):
-                        stdout += f"{bot_id}: Pac {pac_id} switched to {PacType.to_string(new_type)}\n"
-                    else:
-                        stderr += f"{bot_id}: Pac {pac_id} cannot SWITCH (cooldown)\n"
         
-        # Phase 2: Résolution des mouvements
-        new_positions = {}
+        # Phase 3: Résolution des mouvements avec gestion des collisions
+        # Sauvegarder positions de départ
+        old_positions = {pac_id: self.pacs[pac_id].position for pac_id in self.pacs.keys()}
         
-        for pac_id, intent in intentions.items():
-            if intent['action'] == 'MOVE':
+        # Calculer les mouvements pour chaque pac (1 case à la fois)
+        for move_step in range(2):  # Max 2 steps pour SPEED
+            # Calculer les nouvelles positions pour ce step
+            step_moves = {}
+            for pac_id, intent in intentions.items():
+                if intent['action'] != 'MOVE':
+                    continue
                 pac = self.pacs[pac_id]
+                if pac.dead:
+                    continue
+                if move_step >= intent['steps']:
+                    continue
+                    
                 path = intent['path']
-                steps = min(intent['steps'], len(path) - 1)
+                next_pos_idx = move_step + 1
+                if next_pos_idx < len(path):
+                    step_moves[pac_id] = path[next_pos_idx]
+            
+            if not step_moves:
+                break
+            
+            # Résolution des collisions (itératif jusqu'à stabilisation)
+            max_iterations = 10
+            for iteration in range(max_iterations):
+                collisions_found = False
+                blocked_pacs = set()
                 
-                if steps > 0:
-                    new_pos = path[steps]
-                    new_positions[pac_id] = new_pos
+                # Détecter collisions sur même case
+                target_counts = {}
+                for pac_id, pos in step_moves.items():
+                    if pac_id in blocked_pacs:
+                        continue
+                    pac = self.pacs[pac_id]
+                    target_counts.setdefault(pos, []).append((pac_id, pac.owner, pac.type))
+                
+                for pos, pac_list in target_counts.items():
+                    if len(pac_list) > 1:
+                        owners = set(owner for _, owner, _ in pac_list)
+                        types = set(ptype for _, _, ptype in pac_list)
+                        
+                        # Collision si même joueur OU même type
+                        if len(owners) == 1 or len(types) == 1:
+                            logger.info(f"💥 Collision at {pos}: {[pid for pid, _, _ in pac_list]} blocked")
+                            for pac_id, _, _ in pac_list:
+                                blocked_pacs.add(pac_id)
+                                # Retour à la position initiale
+                                self.pacs[pac_id].position = old_positions[pac_id]
+                            collisions_found = True
+                
+                # Détecter croisements
+                for pac1_id, new_pos1 in step_moves.items():
+                    if pac1_id in blocked_pacs:
+                        continue
+                    pac1 = self.pacs[pac1_id]
+                    old_pos1 = pac1.position
+                    
+                    for pac2_id, new_pos2 in step_moves.items():
+                        if pac2_id <= pac1_id or pac2_id in blocked_pacs:
+                            continue
+                        pac2 = self.pacs[pac2_id]
+                        old_pos2 = pac2.position
+                        
+                        # Croisement détecté
+                        if old_pos1 == new_pos2 and old_pos2 == new_pos1:
+                            # Même joueur ou même type → blocage
+                            if pac1.owner == pac2.owner or pac1.type == pac2.type:
+                                logger.info(f"🔀 Crossing collision: {pac1_id} and {pac2_id} blocked")
+                                blocked_pacs.add(pac1_id)
+                                blocked_pacs.add(pac2_id)
+                                # Retour à la position initiale
+                                self.pacs[pac1_id].position = old_positions[pac1_id]
+                                self.pacs[pac2_id].position = old_positions[pac2_id]
+                                collisions_found = True
+                            # Types différents: pac faible bloqué
+                            elif PacType.beats(pac1.type, pac2.type):
+                                logger.info(f"🔀 Crossing: {pac2_id} blocked by stronger {pac1_id}")
+                                blocked_pacs.add(pac2_id)
+                                self.pacs[pac2_id].position = old_positions[pac2_id]
+                                collisions_found = True
+                            elif PacType.beats(pac2.type, pac1.type):
+                                logger.info(f"🔀 Crossing: {pac1_id} blocked by stronger {pac2_id}")
+                                blocked_pacs.add(pac1_id)
+                                self.pacs[pac1_id].position = old_positions[pac1_id]
+                                collisions_found = True
+                
+                # Retirer les pacs bloqués
+                for pac_id in blocked_pacs:
+                    if pac_id in step_moves:
+                        del step_moves[pac_id]
+                
+                if not collisions_found:
+                    break
+            
+            # Appliquer les mouvements validés
+            for pac_id, new_pos in step_moves.items():
+                pac = self.pacs[pac_id]
+                pac.position = new_pos
+                stdout += f"{pac.owner}: Pac {pac_id} moved to {new_pos}\n"
         
-        # Détection des collisions (plusieurs pacs → même case)
-        target_counts = {}
-        for pac_id, pos in new_positions.items():
-            target_counts.setdefault(pos, []).append(pac_id)
+        # Phase 4: Tuer les pacs qui ont perdu lors de collisions (combat)
+        combat_pairs = set()
+        for pac1 in self.pacs.values():
+            if pac1.dead:
+                continue
+            for pac2 in self.pacs.values():
+                if pac2.dead or pac1.id >= pac2.id:
+                    continue
+                if pac1.owner == pac2.owner:
+                    continue
+                if pac1.position == pac2.position:
+                    pair_key = tuple(sorted([pac1.id, pac2.id]))
+                    if pair_key in combat_pairs:
+                        continue
+                    combat_pairs.add(pair_key)
+                    
+                    logger.info(f"⚔️ COMBAT at {pac1.position}: Pac {pac1.id} ({PacType.to_string(pac1.type)}) vs Pac {pac2.id} ({PacType.to_string(pac2.type)})")
+                    if PacType.beats(pac1.type, pac2.type):
+                        pac2.dead = True
+                        stdout += f"Combat: Pac {pac1.id} defeated Pac {pac2.id}\n"
+                    elif PacType.beats(pac2.type, pac1.type):
+                        pac1.dead = True
+                        stdout += f"Combat: Pac {pac2.id} defeated Pac {pac1.id}\n"
+                        break
         
-        for pos, pac_ids in target_counts.items():
-            if len(pac_ids) > 1:
-                stderr += f"Collision at {pos} between pacs {pac_ids}\n"
-                for pac_id in pac_ids:
-                    del new_positions[pac_id]
-        
-        # Phase 3: Application des mouvements
-        for pac_id, new_pos in new_positions.items():
-            pac = self.pacs[pac_id]
-            old_pos = pac.position
-            pac.position = new_pos
-            stdout += f"{pac.owner}: Pac {pac_id} moved {old_pos} -> {new_pos}\n"
-        
-        # Phase 4: Consommation des pellets et cherries
+        # Phase 5: Ingestion des pastilles
         for pac in self.pacs.values():
             if pac.dead:
                 continue
@@ -665,23 +786,7 @@ class PacmanRefereeV2(Referee):
                 self.scores[pac.owner] += self.cherry_score
                 stdout += f"{pac.owner}: Pac {pac.id} ate cherry at {pos} (+{self.cherry_score})\n"
         
-        # Phase 5: Combat (collisions entre pacs adverses)
-        for pac1 in self.pacs.values():
-            if pac1.dead:
-                continue
-            for pac2 in self.pacs.values():
-                if pac2.dead or pac1.id == pac2.id:
-                    continue
-                if pac1.owner == pac2.owner:
-                    continue
-                if pac1.position == pac2.position:
-                    # Combat!
-                    if PacType.beats(pac1.type, pac2.type):
-                        pac2.dead = True
-                        stdout += f"Combat: Pac {pac1.id} ({PacType.to_string(pac1.type)}) defeated Pac {pac2.id} ({PacType.to_string(pac2.type)})\n"
-                    elif PacType.beats(pac2.type, pac1.type):
-                        pac1.dead = True
-                        stdout += f"Combat: Pac {pac2.id} ({PacType.to_string(pac2.type)}) defeated Pac {pac1.id} ({PacType.to_string(pac1.type)})\n"
+
         
         self.turn += 1
         state = self.get_state()

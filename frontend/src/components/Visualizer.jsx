@@ -30,39 +30,93 @@ function PixiGrid({
   const controlsContainerRef = useRef(null)
   const progressBarRef = useRef(null)
   const pacsSpritesRef = useRef({})
-  const spriteSheetsRef = useRef({ red: null, blue: null })
+  const spriteSheetsRef = useRef({ red: null, blue: null, tiles: null, extra: null })
   const animationFrameRef = useRef(0)
+  const cellSizeRef = useRef(0)
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 })
   const [spritesLoaded, setSpritesLoaded] = useState(false)
+  const [currentAnimFrame, setCurrentAnimFrame] = useState(0)
+  const particlePoolRef = useRef([])
+  const activeParticlesRef = useRef([])
+  
+  // Séquence des 8 frames pour un tour complet
+  const animationSequence = [1, 2, 3, 4, 4, 3, 2, 1]
   
   const GRID_PADDING = 20
   const CONTROLS_HEIGHT = 100
   const MIN_CELL_SIZE = 40
   const MAX_CELL_SIZE = 100  // Augmenté de 60 à 100 pour un plateau plus grand
-  
+
+  /**
+   * Assigne des directions de pacs basées sur les mouvements précédents
+   */
+  const assignPacDirections = (pacs, prevPacsArray) => {
+    const pacDirections = new Map()
+    pacs.forEach(pac => {
+      const direction = getDirection(pac, prevPacsArray)
+      pacDirections.set(pac.id || pac.owner, direction)
+    })
+    return pacDirections
+  }
+
   // Load sprite sheets
   useEffect(() => {
+    console.log('🚀 useEffect loadSprites DÉMARRÉ')
     const loadSprites = async () => {
       try {
+        console.log('🔄 Début chargement spritesheets...')
+
         // Load red pac sprites
+        console.log('📥 Chargement red.png...')
         const redTexture = await PIXI.Assets.load('/assets/sprites/red.png')
-        const redData = await fetch('/assets/sprites/red.json').then(r => r.json())
+        console.log('✓ red.png chargé')
         
+        console.log('📥 Chargement red.json...')
+        const redDataResponse = await fetch('/assets/sprites/red.json')
+        const redData = await redDataResponse.json()
+        console.log('✓ red.json chargé')
+
         // Load blue pac sprites
+        console.log('📥 Chargement blue.png...')
         const blueTexture = await PIXI.Assets.load('/assets/sprites/blue.png')
-        const blueData = await fetch('/assets/sprites/blue.json').then(r => r.json())
+        console.log('✓ blue.png chargé')
         
+        console.log('📥 Chargement blue.json...')
+        const blueDataResponse = await fetch('/assets/sprites/blue.json')
+        const blueData = await blueDataResponse.json()
+        console.log('✓ blue.json chargé')
+
+        // Load maze tiles
+        const tilesTexture = await PIXI.Assets.load('/assets/sprites/tiles_no_padding.png')
+        const tilesDataResponse = await fetch('/assets/sprites/tiles_no_padding.json')
+        const tilesData = await tilesDataResponse.json()
+        
+        // Load pellets/cherries
+        const extraTexture = await PIXI.Assets.load('/assets/sprites/extra.png')
+        const extraDataResponse = await fetch('/assets/sprites/extra.json')
+        const extraData = await extraDataResponse.json()
+
         spriteSheetsRef.current = {
           red: { texture: redTexture, data: redData },
-          blue: { texture: blueTexture, data: blueData }
+          blue: { texture: blueTexture, data: blueData },
+          tiles: { texture: tilesTexture, data: tilesData },
+          extra: { texture: extraTexture, data: extraData }
         }
-        
+
+        console.log('✅ Spritesheets chargées avec succès!')
         setSpritesLoaded(true)
+        console.log('✅ setSpritesLoaded(true) appelé')
       } catch (error) {
-        console.error('Failed to load sprites:', error)
+        console.error('❌ Erreur chargement sprites:', error)
+        console.error('Stack:', error.stack)
+        // Continue without sprites - will use fallback circles
+        console.log('⚠️ Fallback: setSpritesLoaded(true) après erreur')
+        setSpritesLoaded(true)
       }
+      console.log('🏁 Fin de loadSprites()')
     }
-    
+
+    console.log('📞 Appel loadSprites()')
     loadSprites()
   }, [])
   
@@ -100,21 +154,98 @@ function PixiGrid({
     }
   }, [])
   
+  // Initialize PixiJS app when canvas is ready
   useEffect(() => {
-    if (!canvasRef.current || !state || !spritesLoaded) return
-    
+    if (!canvasRef.current) {
+      console.log('Canvas not ready yet')
+      return
+    }
+
+    const width = 7 // Default grid size
+    const height = 5
+    const CELL_SIZE = 60 // Default cell size
+
+    const initApp = async () => {
+      if (!appRef.current) {
+        try {
+          console.log('Initializing PixiJS app...')
+          const app = new PIXI.Application()
+          await app.init({
+            width: width * CELL_SIZE + GRID_PADDING * 2,
+            height: height * CELL_SIZE + GRID_PADDING * 2 + CONTROLS_HEIGHT,
+            backgroundColor: 0x1a1a2e,
+            antialias: true,
+            resizeTo: canvasRef.current
+          })
+
+          if (canvasRef.current && !appRef.current) {
+            console.log('Adding canvas to DOM...')
+            canvasRef.current.appendChild(app.canvas)
+            appRef.current = app
+
+            console.log('Canvas added to DOM, app initialized:', !!appRef.current)
+
+            // Make canvas responsive
+            app.canvas.style.width = '100%'
+            app.canvas.style.height = '100%'
+            app.canvas.style.objectFit = 'contain'
+
+            // Create grid container
+            const gridContainer = new PIXI.Container()
+            gridContainer.x = GRID_PADDING
+            gridContainer.y = GRID_PADDING
+            app.stage.addChild(gridContainer)
+            gridContainerRef.current = gridContainer
+
+            // Create controls container
+            const controlsContainer = new PIXI.Container()
+            controlsContainer.x = GRID_PADDING
+            controlsContainer.y = height * CELL_SIZE + GRID_PADDING + 10
+            app.stage.addChild(controlsContainer)
+            controlsContainerRef.current = controlsContainer
+
+            console.log('PixiJS app initialized successfully with containers')
+          }
+        } catch (error) {
+          console.error('Failed to initialize PixiJS app:', error)
+        }
+      }
+    }
+
+    initApp()
+
+    return () => {
+      // Cleanup on unmount
+      if (appRef.current && canvasRef.current?.children.length === 0) {
+        appRef.current.destroy(true, { children: true, texture: true })
+        appRef.current = null
+      }
+    }
+  }, []) // Only depend on canvas availability
+
+  // Render grid when app is ready and state changes
+  useEffect(() => {
+    console.log('Render effect triggered:', { app: !!appRef.current, state: !!state, spritesLoaded })
+
+    if (!appRef.current || !state) {
+      console.log('Skipping render - app or state not ready')
+      return
+    }
+
     const width = state?.grid?.[0]?.length || 7
     const height = state?.grid?.length || 5
     const pellets = state.pellets || []
     const cherries = state.cherries || []
-    
+
+    console.log('Rendering grid:', { width, height, pellets: pellets.length, cherries: cherries.length })
+
     // Calculate optimal cell size based on container size
     const availableWidth = containerSize.width - GRID_PADDING * 2
     const availableHeight = containerSize.height - GRID_PADDING * 2 - CONTROLS_HEIGHT
     const cellSizeByWidth = Math.floor(availableWidth / width)
     const cellSizeByHeight = Math.floor(availableHeight / height)
     const CELL_SIZE = Math.max(MIN_CELL_SIZE, Math.min(MAX_CELL_SIZE, Math.min(cellSizeByWidth, cellSizeByHeight)))
-    
+
     // Gérer les deux formats de pacs
     let pacsArray = []
     if (state?.pacs) {
@@ -128,82 +259,271 @@ function PixiGrid({
         }))
       }
     }
-    
-    // Initialize PixiJS app only once
-    if (!appRef.current) {
-      const app = new PIXI.Application()
-      app.init({
-        width: width * CELL_SIZE + GRID_PADDING * 2,
-        height: height * CELL_SIZE + GRID_PADDING * 2 + CONTROLS_HEIGHT,
-        backgroundColor: 0x1a1a2e,
-        antialias: true,
-        resizeTo: canvasRef.current
-      }).then(() => {
-        if (canvasRef.current && !appRef.current) {
-          canvasRef.current.appendChild(app.canvas)
-          appRef.current = app
-          
-          // Make canvas responsive
-          app.canvas.style.width = '100%'
-          app.canvas.style.height = 'auto'
-          app.canvas.style.maxWidth = `${width * CELL_SIZE + GRID_PADDING * 2}px`
-          
-          // Create grid container
-          const gridContainer = new PIXI.Container()
-          gridContainer.x = GRID_PADDING
-          gridContainer.y = GRID_PADDING
-          app.stage.addChild(gridContainer)
-          gridContainerRef.current = gridContainer
-          
-          // Create controls container
-          const controlsContainer = new PIXI.Container()
-          controlsContainer.x = GRID_PADDING
-          controlsContainer.y = height * CELL_SIZE + GRID_PADDING + 10
-          app.stage.addChild(controlsContainer)
-          controlsContainerRef.current = controlsContainer
-          
-          renderGrid(app, gridContainer, width, height, pellets, cherries, pacsArray, CELL_SIZE, prevState)
-          renderControls(app, controlsContainer, width * CELL_SIZE, CELL_SIZE)
-        }
-      })
-    } else {
-      // Update existing grid and resize canvas
-      const app = appRef.current
-      if (app) {
-        app.renderer.resize(width * CELL_SIZE + GRID_PADDING * 2, height * CELL_SIZE + GRID_PADDING * 2 + CONTROLS_HEIGHT)
+
+    console.log('Pacs array:', pacsArray.length, 'pacs')
+
+    const app = appRef.current
+    const gridContainer = gridContainerRef.current
+    const controlsContainer = controlsContainerRef.current
+
+    if (app && gridContainer && controlsContainer) {
+      // Resize canvas if needed
+      app.renderer.resize(width * CELL_SIZE + GRID_PADDING * 2, height * CELL_SIZE + GRID_PADDING * 2 + CONTROLS_HEIGHT)
+
+      // Ajuster la taille des sprites si CELL_SIZE a changé
+      if (cellSizeRef.current !== CELL_SIZE) {
+        Object.values(pacsSpritesRef.current).forEach(sprite => {
+          if (sprite && sprite.baseFrameWidth) {
+            const newScale = (CELL_SIZE / sprite.baseFrameWidth) * 1.5
+            const scaleX = Math.sign(sprite.scale.x) * newScale
+            const scaleY = Math.sign(sprite.scale.y) * newScale
+            sprite.scale.set(scaleX, scaleY)
+          }
+        })
+        cellSizeRef.current = CELL_SIZE
       }
+
+      // Clear and re-render grid
+      gridContainer.removeChildren()
+      renderGrid(app, gridContainer, width, height, pellets, cherries, pacsArray, CELL_SIZE, prevState, player1Name, player2Name)
       
-      const gridContainer = gridContainerRef.current
-      const controlsContainer = controlsContainerRef.current
-      if (gridContainer) {
-        gridContainer.removeChildren()
-        renderGrid(appRef.current, gridContainer, width, height, pellets, cherries, pacsArray, CELL_SIZE, prevState)
+      // Détecter les pellets/cherries mangés et créer animations
+      if (prevState) {
+        const prevPellets = new Set((prevState.pellets || []).map(p => `${p[0]},${p[1]}`))
+        const currPellets = new Set(pellets.map(p => `${p[0]},${p[1]}`))
+        const prevCherries = new Set((prevState.cherries || []).map(c => `${c[0]},${c[1]}`))
+        const currCherries = new Set(cherries.map(c => `${c[0]},${c[1]}`))
+        
+        prevPellets.forEach(key => {
+          if (!currPellets.has(key)) {
+            const [x, y] = key.split(',').map(Number)
+            createSplashAnimation(gridContainer, x * CELL_SIZE + CELL_SIZE / 2, y * CELL_SIZE + CELL_SIZE / 2, 1, CELL_SIZE)
+          }
+        })
+        
+        prevCherries.forEach(key => {
+          if (!currCherries.has(key)) {
+            const [x, y] = key.split(',').map(Number)
+            createSplashAnimation(gridContainer, x * CELL_SIZE + CELL_SIZE / 2, y * CELL_SIZE + CELL_SIZE / 2, 2, CELL_SIZE)
+          }
+        })
       }
-      if (controlsContainer) {
-        controlsContainer.y = height * CELL_SIZE + GRID_PADDING + 10
-        controlsContainer.removeChildren()
-        renderControls(appRef.current, controlsContainer, width * CELL_SIZE, CELL_SIZE)
-      }
+
+      // Update controls position and re-render
+      controlsContainer.y = height * CELL_SIZE + GRID_PADDING + 10
+      controlsContainer.removeChildren()
+      renderControls(app, controlsContainer, width * CELL_SIZE, CELL_SIZE)
+
+      // Mettre à jour les textures des sprites après le rendu
+      updatePacSpriteTextures(pacsArray)
+
+      console.log('Grid rendered successfully')
+    } else {
+      console.log('Missing containers:', { app: !!app, gridContainer: !!gridContainer, controlsContainer: !!controlsContainer })
     }
-    
-    return () => {
-      // Cleanup on unmount
-      if (appRef.current && canvasRef.current?.children.length === 0) {
-        appRef.current.destroy(true, { children: true, texture: true })
-        appRef.current = null
-      }
-    }
-  }, [state, prevState, containerSize, spritesLoaded])
-  
-  // Animation frame counter
+  }, [state, prevState, containerSize, spritesLoaded, currentAnimFrame])
+
+  // Trigger initial render when app becomes available
   useEffect(() => {
+    if (appRef.current && state && gridContainerRef.current) {
+      console.log('App and containers ready, triggering render')
+      // Force re-render by updating containerSize
+      setContainerSize(prev => ({ ...prev }))
+    }
+  }, [appRef.current, state])
+
+  // Animation automatique des 8 frames pendant les transitions
+  useEffect(() => {
+    if (!isAnimating || isPaused) return
+    
     const interval = setInterval(() => {
-      animationFrameRef.current = (animationFrameRef.current + 1) % 4
-    }, 150) // Change frame every 150ms
+      setCurrentAnimFrame(prev => {
+        const next = (prev + 1) % 8
+        console.log(`Animation frame: ${prev} -> ${next}`)
+        return next
+      })
+    }, 150)
     
     return () => clearInterval(interval)
-  }, [])
+  }, [isAnimating, isPaused])
   
+  // Réinitialiser l'animation au changement de tour
+  useEffect(() => {
+    console.log(`Tour changé: ${currentIndex}, reset animation frame`)
+    setCurrentAnimFrame(0)
+  }, [currentIndex])
+  
+  // Mettre à jour les textures quand la frame d'animation change
+  useEffect(() => {
+    console.log(`currentAnimFrame changé: ${currentAnimFrame}, spritesLoaded: ${spritesLoaded}`)
+    if (state?.pacs) {
+      const pacsArray = Array.isArray(state.pacs) ? state.pacs : Object.entries(state.pacs).map(([owner, pos]) => ({
+        id: owner,
+        owner: owner,
+        position: pos
+      }))
+      updatePacSpriteTextures(pacsArray)
+    }
+  }, [currentAnimFrame, spritesLoaded, state])
+
+  const animationFrameIndexRef = useRef(0)
+  
+  const createSplashAnimation = (container, x, y, size, CELL_SIZE) => {
+    const extraSheet = spriteSheetsRef.current.extra
+    if (!extraSheet || !extraSheet.texture || !extraSheet.data) return
+    
+    const frameData = extraSheet.data.frames['particle']
+    if (!frameData) return
+    
+    const frame = frameData.frame
+    const particleCount = 8
+    const particles = []
+    
+    for (let i = 0; i < particleCount; i++) {
+      const texture = new PIXI.Texture({
+        source: extraSheet.texture.source,
+        frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+      })
+      
+      const particle = new PIXI.Sprite(texture)
+      particle.anchor.set(0.5)
+      particle.x = x
+      particle.y = y
+      particle.scale.set(size * (CELL_SIZE / 200))
+      
+      const angle = (Math.PI * 2 * i) / particleCount
+      const speed = (Math.random() * 100 + 50 + (size > 1 ? 50 : 0)) * (CELL_SIZE / 100)
+      
+      particle.userData = {
+        startTime: Date.now(),
+        duration: 600,
+        angle,
+        speed,
+        baseSize: size * (CELL_SIZE / 200),
+        startX: x,
+        startY: y
+      }
+      
+      container.addChild(particle)
+      particles.push(particle)
+      activeParticlesRef.current.push(particle)
+    }
+  }
+  
+  // Animation loop pour les particules
+  useEffect(() => {
+    if (!appRef.current) return
+    
+    const animate = () => {
+      const now = Date.now()
+      const toRemove = []
+      
+      activeParticlesRef.current.forEach((particle, idx) => {
+        const elapsed = now - particle.userData.startTime
+        const progress = Math.min(elapsed / particle.userData.duration, 1)
+        
+        if (progress >= 1) {
+          toRemove.push(idx)
+          if (particle.parent) {
+            particle.parent.removeChild(particle)
+          }
+          particle.destroy()
+        } else {
+          particle.x = particle.userData.startX + Math.cos(particle.userData.angle) * particle.userData.speed * progress
+          particle.y = particle.userData.startY + Math.sin(particle.userData.angle) * particle.userData.speed * progress
+          particle.scale.set(particle.userData.baseSize * (1 - progress))
+          particle.alpha = 1 - progress
+        }
+      })
+      
+      toRemove.reverse().forEach(idx => {
+        activeParticlesRef.current.splice(idx, 1)
+      })
+      
+      if (activeParticlesRef.current.length > 0) {
+        requestAnimationFrame(animate)
+      }
+    }
+    
+    if (activeParticlesRef.current.length > 0) {
+      requestAnimationFrame(animate)
+    }
+  }, [state])
+
+  // Fonction pour mettre à jour les textures des sprites de pacs
+  const updatePacSpriteTextures = (pacsArray) => {
+    if (!appRef.current) {
+      console.log('updatePacSpriteTextures: app non initialisée')
+      return
+    }
+    
+    const spriteCount = Object.keys(pacsSpritesRef.current).length
+    console.log(`Mise à jour textures - Frame ${currentAnimFrame}/${animationSequence.length}, ${spriteCount} sprites, spritesLoaded: ${spritesLoaded}`)
+    
+    if (spriteCount === 0) {
+      console.log('Aucun sprite à mettre à jour')
+      return
+    }
+    
+    if (!spritesLoaded) {
+      console.log('Sprites pas encore chargés, skip update')
+      return
+    }
+    
+    Object.entries(pacsSpritesRef.current).forEach(([pacId, sprite]) => {
+      if (!sprite) return
+      
+      // Déterminer la couleur du pac depuis l'owner stocké dans le sprite
+      const isPlayer = sprite.pacOwner === 'player'
+      const pacColor = isPlayer ? 'red' : 'blue'
+      const spriteSheet = spriteSheetsRef.current[pacColor]
+      
+      if (!spriteSheet || !spriteSheet.data) {
+        console.warn(`SpriteSheet ${pacColor} non disponible`)
+        return
+      }
+      
+      // Récupérer le vrai type du pac depuis le state
+      const pacData = pacsArray.find(p => (p.id || p.owner) === pacId)
+      if (!pacData) return
+      
+      // Convertir le type string en nombre
+      let refereeType = 0
+      if (typeof pacData.type === 'string') {
+        if (pacData.type === 'ROCK') refereeType = 0
+        else if (pacData.type === 'PAPER') refereeType = 1
+        else if (pacData.type === 'SCISSORS') refereeType = 2
+        else if (pacData.type === 'NEUTRAL') refereeType = -1
+      } else {
+        refereeType = pacData.type ?? 0
+      }
+      
+      // Mapping: referee (-1=NEUTRAL,0=ROCK,1=PAPER,2=SCISSORS) -> sprites (1=NEUTRAL,4=ROCK,3=PAPER,2=SCISSORS)
+      const spriteType = refereeType === -1 ? 1 : refereeType === 0 ? 4 : refereeType === 1 ? 3 : 2
+      const frameNum = animationSequence[currentAnimFrame]
+      const frameName = `paku_${pacColor}_${spriteType}_walk000${frameNum}`
+      
+      const frameData = spriteSheet.data.frames[frameName]
+      if (frameData) {
+        const frame = frameData.frame
+        const texture = new PIXI.Texture({
+          source: spriteSheet.texture.source,
+          frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+        })
+        sprite.texture = texture
+        console.log(`✓ Pac ${pacId}: frame ${frameName}`)
+      } else {
+        console.warn(`✗ Frame non trouvée: ${frameName}`)
+      }
+    })
+    
+    // Forcer le rendu PixiJS
+    appRef.current.renderer.render(appRef.current.stage)
+    console.log('Rendu PixiJS forcé')
+  }
+
+
+
   const getDirection = (pac, prevPacsArray) => {
     if (!prevPacsArray || !pac.position) return 1 // Default: right
     
@@ -229,12 +549,21 @@ function PixiGrid({
       return null
     }
     
-    // Get direction from previous state
-    const dir = getDirection(pac, prevPacsArray)
+    // Convertir le type string en nombre
+    let refereeType = 0
+    if (typeof pac.type === 'string') {
+      if (pac.type === 'ROCK') refereeType = 0
+      else if (pac.type === 'PAPER') refereeType = 1
+      else if (pac.type === 'SCISSORS') refereeType = 2
+      else if (pac.type === 'NEUTRAL') refereeType = -1
+    } else {
+      refereeType = pac.type ?? 0
+    }
     
-    // Get animation frame (cycle through walk001-walk004)
-    const frameNum = (animationFrameRef.current % 4) + 1
-    const frameName = `paku_${isPlayer ? 'red' : 'blue'}_${dir}_walk000${frameNum}`
+    // Mapping: referee (-1=NEUTRAL,0=ROCK,1=PAPER,2=SCISSORS) -> sprites (1=NEUTRAL,4=ROCK,3=PAPER,2=SCISSORS)
+    const spriteType = refereeType === -1 ? 1 : refereeType === 0 ? 4 : refereeType === 1 ? 3 : 2
+    const frameNum = 1 // Premier frame pour l'initialisation
+    const frameName = `paku_${isPlayer ? 'red' : 'blue'}_${spriteType}_walk000${frameNum}`
     
     const frameData = spriteSheet.data.frames[frameName]
     if (!frameData) {
@@ -249,23 +578,169 @@ function PixiGrid({
     })
     
     const sprite = new PIXI.Sprite(texture)
-    const scale = (CELL_SIZE / frame.w) * 0.9 // Scale to fit cell with some padding
+    const scale = (CELL_SIZE / frame.w) * 1.5 // 150% de la cellule
     sprite.scale.set(scale)
     sprite.anchor.set(0.5)
+    sprite.baseFrameWidth = frame.w // Stocker la largeur de base pour le redimensionnement
     
     return sprite
   }
   
-  const renderGrid = (app, container, width, height, pellets, cherries, pacsArray, CELL_SIZE, prevState) => {
+  const renderGrid = (app, container, width, height, pellets, cherries, pacsArray, CELL_SIZE, prevState, player1Name, player2Name) => {
+    // Tooltip container
+    const tooltipRef = { current: null }
+    
     // Draw grid background
     const bg = new PIXI.Graphics()
     bg.rect(0, 0, width * CELL_SIZE, height * CELL_SIZE)
     bg.fill(0x0f0f1e)
     container.addChild(bg)
     
+    // Draw floor tiles first
+    const tilesSheet = spriteSheetsRef.current.tiles
+    if (tilesSheet && tilesSheet.texture && tilesSheet.data) {
+      const floorFrame = tilesSheet.data.frames['floor']
+      if (floorFrame) {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            if (!state.grid || !state.grid[y] || state.grid[y][x] !== '#') {
+              const frame = floorFrame.frame
+              const texture = new PIXI.Texture({
+                source: tilesSheet.texture.source,
+                frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+              })
+              const floorSprite = new PIXI.Sprite(texture)
+              floorSprite.x = x * CELL_SIZE
+              floorSprite.y = y * CELL_SIZE
+              floorSprite.width = CELL_SIZE
+              floorSprite.height = CELL_SIZE
+              container.addChild(floorSprite)
+            }
+          }
+        }
+      }
+      
+      // Draw walls
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (state.grid && state.grid[y] && state.grid[y][x] === '#') {
+            let mask = 0
+            const isWall = (cy, cx) => {
+              // Wrapping horizontal
+              if (cx < 0) cx = width - 1
+              if (cx >= width) cx = 0
+              // Pas de wrapping vertical (bordures = murs)
+              if (cy < 0 || cy >= height) return true
+              return state.grid[cy] && state.grid[cy][cx] === '#'
+            }
+            
+            if (isWall(y - 1, x)) mask += 2
+            if (isWall(y, x + 1)) mask += 16
+            if (isWall(y + 1, x)) mask += 64
+            if (isWall(y, x - 1)) mask += 8
+            if ((mask & 10) === 10 && isWall(y - 1, x - 1)) mask += 1
+            if ((mask & 18) === 18 && isWall(y - 1, x + 1)) mask += 4
+            if ((mask & 72) === 72 && isWall(y + 1, x - 1)) mask += 32
+            if ((mask & 80) === 80 && isWall(y + 1, x + 1)) mask += 128
+            
+            const frameData = tilesSheet.data.frames[String(mask)]
+            if (frameData) {
+              const frame = frameData.frame
+              const texture = new PIXI.Texture({
+                source: tilesSheet.texture.source,
+                frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+              })
+              const tileSprite = new PIXI.Sprite(texture)
+              tileSprite.x = x * CELL_SIZE
+              tileSprite.y = y * CELL_SIZE
+              tileSprite.width = CELL_SIZE
+              tileSprite.height = CELL_SIZE
+              container.addChild(tileSprite)
+            }
+          }
+        }
+      }
+    } else {
+      // Fallback si tuiles non chargées
+      const walls = new PIXI.Graphics()
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (state.grid && state.grid[y] && state.grid[y][x] === '#') {
+            walls.rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            walls.fill(0x1a4d7a)
+          }
+        }
+      }
+      container.addChild(walls)
+    }
+    
+    // Ajouter zones interactives pour chaque cellule (tooltip coordonnées)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const cellHitArea = new PIXI.Graphics()
+        cellHitArea.rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+        cellHitArea.fill(0x000000, 0.0) // Invisible
+        cellHitArea.eventMode = 'static'
+        cellHitArea.cursor = 'crosshair'
+        
+        cellHitArea.on('pointerover', () => {
+          if (tooltipRef.current) container.removeChild(tooltipRef.current)
+          
+          const tooltip = new PIXI.Container()
+          const tooltipBg = new PIXI.Graphics()
+          tooltipBg.rect(0, 0, 60, 25)
+          tooltipBg.fill(0x000000, 0.8)
+          tooltipBg.stroke({ width: 1, color: 0xffffff })
+          
+          const tooltipText = new PIXI.Text({
+            text: `(${x}, ${y})`,
+            style: { fontFamily: 'Arial', fontSize: 12, fill: 0xffffff }
+          })
+          tooltipText.x = 5
+          tooltipText.y = 5
+          
+          tooltip.addChild(tooltipBg)
+          tooltip.addChild(tooltipText)
+          tooltip.x = x * CELL_SIZE + CELL_SIZE / 2 - 30
+          tooltip.y = y * CELL_SIZE - 30
+          
+          container.addChild(tooltip)
+          tooltipRef.current = tooltip
+        })
+        
+        cellHitArea.on('pointerout', () => {
+          if (tooltipRef.current) {
+            container.removeChild(tooltipRef.current)
+            tooltipRef.current = null
+          }
+        })
+        
+        container.addChild(cellHitArea)
+      }
+    }
+    
+    // Compter les pacs vivants par équipe
+    const bluePacsAlive = pacsArray.filter(p => p.owner === 'player' && !p.dead).length
+    const redPacsAlive = pacsArray.filter(p => p.owner === 'opponent' && !p.dead).length
+    
+    // Afficher le compteur en haut à gauche
+    const counterText = new PIXI.Text({
+      text: `🔵 ${bluePacsAlive}  🔴 ${redPacsAlive}`,
+      style: {
+        fontFamily: 'Arial',
+        fontSize: 20,
+        fontWeight: 'bold',
+        fill: 0xffffff,
+        stroke: { color: 0x000000, width: 3 }
+      }
+    })
+    counterText.x = 10
+    counterText.y = 10
+    container.addChild(counterText)
+    
     // Draw grid lines
     const grid = new PIXI.Graphics()
-    grid.lineStyle(1, 0x2a2a3e, 0.3)
+    grid.setStrokeStyle({ width: 1, color: 0x2a2a3e, alpha: 0.3 })
     for (let x = 0; x <= width; x++) {
       grid.moveTo(x * CELL_SIZE, 0)
       grid.lineTo(x * CELL_SIZE, height * CELL_SIZE)
@@ -276,67 +751,262 @@ function PixiGrid({
     }
     container.addChild(grid)
     
-    // Draw pellets
-    const pelletSet = new Set(pellets.map(p => `${p[0]},${p[1]}`))
-    pelletSet.forEach(key => {
-      const [x, y] = key.split(',').map(Number)
-      const pellet = new PIXI.Graphics()
-      pellet.circle(x * CELL_SIZE + CELL_SIZE/2, y * CELL_SIZE + CELL_SIZE/2, 3)
-      pellet.fill(0xffffff)
-      container.addChild(pellet)
-    })
+    // Draw pellets using CodinGame sprites
+    const extraSheet = spriteSheetsRef.current.extra
+    if (extraSheet && extraSheet.texture && extraSheet.data) {
+      const pelletSet = new Set(pellets.map(p => `${p[0]},${p[1]}`))
+      pelletSet.forEach(key => {
+        const [x, y] = key.split(',').map(Number)
+        const frameData = extraSheet.data.frames['Bonusx1']
+        if (frameData) {
+          const frame = frameData.frame
+          const texture = new PIXI.Texture({
+            source: extraSheet.texture.source,
+            frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+          })
+          const pelletSprite = new PIXI.Sprite(texture)
+          pelletSprite.anchor.set(0.5)
+          pelletSprite.x = x * CELL_SIZE + CELL_SIZE / 2
+          pelletSprite.y = y * CELL_SIZE + CELL_SIZE / 2
+          pelletSprite.width = CELL_SIZE * 0.3
+          pelletSprite.height = CELL_SIZE * 0.3
+          container.addChild(pelletSprite)
+        }
+      })
+      
+      // Draw cherries
+      const cherrySet = new Set(cherries.map(c => `${c[0]},${c[1]}`))
+      cherrySet.forEach(key => {
+        const [x, y] = key.split(',').map(Number)
+        const frameData = extraSheet.data.frames['Bonusx5']
+        if (frameData) {
+          const frame = frameData.frame
+          const texture = new PIXI.Texture({
+            source: extraSheet.texture.source,
+            frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+          })
+          const cherrySprite = new PIXI.Sprite(texture)
+          cherrySprite.anchor.set(0.5)
+          cherrySprite.x = x * CELL_SIZE + CELL_SIZE / 2
+          cherrySprite.y = y * CELL_SIZE + CELL_SIZE / 2
+          cherrySprite.width = CELL_SIZE * 0.6
+          cherrySprite.height = CELL_SIZE * 0.6
+          container.addChild(cherrySprite)
+        }
+      })
+    }
     
-    // Draw cherries (larger, red)
-    const cherrySet = new Set(cherries.map(c => `${c[0]},${c[1]}`))
-    cherrySet.forEach(key => {
-      const [x, y] = key.split(',').map(Number)
-      const cherry = new PIXI.Graphics()
-      // Draw cherry as two circles (cherry shape)
-      cherry.circle(x * CELL_SIZE + CELL_SIZE/2 - 4, y * CELL_SIZE + CELL_SIZE/2, 6)
-      cherry.fill(0xff0000)
-      cherry.circle(x * CELL_SIZE + CELL_SIZE/2 + 4, y * CELL_SIZE + CELL_SIZE/2, 6)
-      cherry.fill(0xff0000)
-      // Stem
-      cherry.lineStyle(2, 0x00ff00)
-      cherry.moveTo(x * CELL_SIZE + CELL_SIZE/2, y * CELL_SIZE + CELL_SIZE/2 - 6)
-      cherry.lineTo(x * CELL_SIZE + CELL_SIZE/2, y * CELL_SIZE + CELL_SIZE/2 - 10)
-      container.addChild(cherry)
+    // Gérer les deux formats de pacs pour prevState
+    let prevPacsArray = []
+    if (prevState?.pacs) {
+      if (Array.isArray(prevState.pacs)) {
+        prevPacsArray = prevState.pacs
+      } else {
+        prevPacsArray = Object.entries(prevState.pacs).map(([owner, pos]) => ({
+          id: owner,
+          owner: owner,
+          position: pos
+        }))
+      }
+    }
+
+    // Assigner les directions des pacs
+    const pacDirections = assignPacDirections(pacsArray, prevPacsArray)
+
+    // Détecter les pacs morts via le flag 'dead' dans l'état
+    const deadPacs = pacsArray.filter(p => p.dead === true)
+    const alivePacs = pacsArray.filter(p => !p.dead)
+
+    // Combiner pacs vivants et morts pour le rendu
+    const allPacsToRender = pacsArray
+
+    // Nettoyer les sprites des pacs qui ne sont plus présents (ni vivants ni morts ce tour)
+    const activePacIds = new Set(allPacsToRender.map(pac => pac.id || pac.owner))
+    Object.keys(pacsSpritesRef.current).forEach(pacId => {
+      if (!activePacIds.has(pacId)) {
+        const sprite = pacsSpritesRef.current[pacId]
+        if (sprite && container.children.includes(sprite)) {
+          container.removeChild(sprite)
+        }
+        delete pacsSpritesRef.current[pacId]
+        console.log(`Sprite nettoyé pour pac ${pacId}`)
+      }
     })
-    
+
     // Draw pacs with animated sprites
-    pacsArray.forEach(pac => {
+    allPacsToRender.forEach(pac => {
       if (!pac.position) return
       const [x, y] = pac.position
-      
-      // Get previous pacs for direction calculation
-      let prevPacsArray = []
-      if (prevState?.pacs) {
-        if (Array.isArray(prevState.pacs)) {
-          prevPacsArray = prevState.pacs
-        } else {
-          prevPacsArray = Object.entries(prevState.pacs).map(([owner, pos]) => ({
-            id: owner,
-            owner: owner,
-            position: pos
-          }))
+
+      // Déterminer la couleur du pac (player = red, opponent = blue)
+      console.log(`Pac ${pac.id}: owner="${pac.owner}"`)
+      const isPlayer = pac.owner === 'player'
+      const pacColor = isPlayer ? 'red' : 'blue'
+      console.log(`Pac ${pac.id}: isPlayer=${isPlayer}, pacColor=${pacColor}`)
+      const direction = pacDirections.get(pac.id || pac.owner) || 1
+
+      // Créer ou récupérer le sprite du pac
+      let pacSprite = pacsSpritesRef.current[pac.id || pac.owner]
+
+      if (!pacSprite) {
+        // Créer un nouveau sprite animé avec les spritesheets blue.png/red.png
+        pacSprite = createPacSprite(pac, 1, CELL_SIZE, prevPacsArray)
+        if (pacSprite) {
+          // Stocker l'owner avec le sprite pour updatePacSpriteTextures
+          pacSprite.pacOwner = pac.owner
+          pacsSpritesRef.current[pac.id || pac.owner] = pacSprite
+          console.log(`Pac ${pac.id || pac.owner} créé avec sprite animé`)
         }
       }
-      
-      const pacSprite = createPacSprite(pac, null, CELL_SIZE, prevPacsArray)
-      
+
       if (pacSprite) {
+        // Déterminer si le pac est mort via le flag 'dead'
+        const isDead = pac.dead === true
+        
+        if (isDead) {
+          console.log(`☠️ Pac ${pac.id} is DEAD! Playing death animation`)
+        }
+        
+        let animationType = 'walk'
+        let animationFrameCount = 4
+        
+        if (isDead) {
+          animationType = 'death'
+          animationFrameCount = 7
+          console.log(`  → Animation type: ${animationType}, frames: ${animationFrameCount}`)
+        } else if (prevPacsArray && pac.position) {
+          const prevPac = prevPacsArray.find(p => (p.id || p.owner) === (pac.id || pac.owner))
+          if (prevPac && prevPac.position) {
+            const returnedToStart = prevPac.position[0] === pac.position[0] && prevPac.position[1] === pac.position[1]
+            
+            if (returnedToStart) {
+              // Collision = blocage
+              animationType = 'blocked'
+              animationFrameCount = 4
+            }
+          }
+        }
+
+        const spriteSheet = spriteSheetsRef.current[pacColor]
+        if (spriteSheet && spriteSheet.texture && spriteSheet.data) {
+          // Convertir le type string en nombre
+          let refereeType = 0
+          if (typeof pac.type === 'string') {
+            if (pac.type === 'ROCK') refereeType = 0
+            else if (pac.type === 'PAPER') refereeType = 1
+            else if (pac.type === 'SCISSORS') refereeType = 2
+            else if (pac.type === 'NEUTRAL') refereeType = -1
+          } else {
+            refereeType = pac.type ?? 0
+          }
+          const spriteType = refereeType === -1 ? 1 : refereeType === 0 ? 4 : refereeType === 1 ? 3 : 2
+          const frameNum = (currentAnimFrame % animationFrameCount) + 1
+          
+          let frameName
+          if (animationType === 'death') {
+            frameName = `paku_${pacColor}_${spriteType}_mort000${frameNum}`
+          } else if (animationType === 'blocked') {
+            frameName = `paku_${pacColor}_${spriteType}_blocked000${frameNum}`
+          } else {
+            frameName = `paku_${pacColor}_${spriteType}_walk000${frameNum}`
+          }
+
+          const frameData = spriteSheet.data.frames[frameName]
+          if (frameData) {
+            const frame = frameData.frame
+            const texture = new PIXI.Texture({
+              source: spriteSheet.texture.source,
+              frame: new PIXI.Rectangle(frame.x, frame.y, frame.w, frame.h)
+            })
+            pacSprite.texture = texture
+          }
+        }
+
+        // Positionner le sprite
         pacSprite.x = x * CELL_SIZE + CELL_SIZE/2
         pacSprite.y = y * CELL_SIZE + CELL_SIZE/2
-        container.addChild(pacSprite)
+
+        // Orienter le sprite selon la direction (les sprites regardent vers la gauche par défaut)
+        const baseScale = Math.abs(pacSprite.scale.x) // Préserver le scale de base
+        pacSprite.rotation = 0 // Reset rotation
+        
+        if (direction === 2) {
+          // Direction droite : retournement horizontal
+          pacSprite.scale.set(-baseScale, baseScale)
+        } else if (direction === 1) {
+          // Direction haut : rotation 90° sens des aiguilles d'une montre
+          pacSprite.scale.set(baseScale, baseScale)
+          pacSprite.rotation = Math.PI / 2
+        } else if (direction === 3) {
+          // Direction bas : rotation 90° sens trigonométrique
+          pacSprite.scale.set(baseScale, baseScale)
+          pacSprite.rotation = -Math.PI / 2
+        } else {
+          // Direction 4 (gauche) : pas de transformation (orientation par défaut)
+          pacSprite.scale.set(baseScale, baseScale)
+        }
+        
+        // Rendre le sprite interactif pour tooltip
+        pacSprite.eventMode = 'static'
+        pacSprite.cursor = 'pointer'
+        
+        // Tooltip pour le pac
+        pacSprite.on('pointerover', () => {
+          const tooltip = new PIXI.Container()
+          const ownerName = pac.owner === 'player' ? player1Name : player2Name
+          const lines = [
+            `Pac ${pac.id}`,
+            `Owner: ${ownerName}`,
+            `Type: ${pac.type || 'N/A'}`,
+            `Pos: (${x}, ${y})`,
+            pac.speed > 1 ? `SPEED: ${pac.ability_duration}` : '',
+            pac.ability_cooldown > 0 ? `Cooldown: ${pac.ability_cooldown}` : ''
+          ].filter(l => l)
+          
+          const tooltipBg = new PIXI.Graphics()
+          tooltipBg.rect(0, 0, 120, lines.length * 18 + 10)
+          tooltipBg.fill(0x000000, 0.9)
+          tooltipBg.stroke({ width: 2, color: isPlayer ? 0x4444ff : 0xff4444 })
+          
+          tooltip.addChild(tooltipBg)
+          
+          lines.forEach((line, i) => {
+            const text = new PIXI.Text({
+              text: line,
+              style: { fontFamily: 'Arial', fontSize: 12, fill: 0xffffff }
+            })
+            text.x = 5
+            text.y = 5 + i * 18
+            tooltip.addChild(text)
+          })
+          
+          tooltip.x = x * CELL_SIZE + CELL_SIZE
+          tooltip.y = y * CELL_SIZE
+          tooltip.zIndex = 1000
+          
+          pacSprite.pacTooltip = tooltip
+          container.addChild(tooltip)
+        })
+        
+        pacSprite.on('pointerout', () => {
+          if (pacSprite.pacTooltip) {
+            container.removeChild(pacSprite.pacTooltip)
+            pacSprite.pacTooltip = null
+          }
+        })
+
+        // S'assurer que le sprite est dans le container
+        if (!container.children.includes(pacSprite)) {
+          container.addChild(pacSprite)
+        }
       } else {
         // Fallback to simple circle if sprite fails
         const fallbackSprite = new PIXI.Graphics()
-        const isPlayer = pac.owner === 'player'
         const color = isPlayer ? 0xffff00 : 0x00ffff
-        
+
         fallbackSprite.circle(x * CELL_SIZE + CELL_SIZE/2, y * CELL_SIZE + CELL_SIZE/2, CELL_SIZE/2 - 5)
         fallbackSprite.fill(color)
-        
+
         container.addChild(fallbackSprite)
       }
     })
@@ -384,16 +1054,16 @@ function PixiGrid({
     progressBg.stroke({ width: 1, color: 0x4a4a5e })
     container.addChild(progressBg)
     
-    // Progress bar fill
-    const progress = totalTurns > 0 ? currentIndex / (totalTurns - 1) : 0
+    // Progress bar fill - basé sur les tours de jeu
+    const progress = (totalTurns > 0 ? currentIndex / (totalTurns - 1) : 0)
     const progressFill = new PIXI.Graphics()
     progressFill.rect(20, progressBarY, progressBarWidth * progress, progressBarHeight)
     progressFill.fill(0x4CAF50)
     container.addChild(progressFill)
     
-    // Progress text
+    // Progress text - afficher le tour de jeu
     const progressText = new PIXI.Text({
-      text: `${currentIndex} / ${totalTurns - 1}`,
+      text: `Tour ${currentIndex} / ${totalTurns - 1}`,
       style: {
         fontFamily: 'Arial',
         fontSize: 14,
@@ -405,12 +1075,14 @@ function PixiGrid({
     progressText.y = progressBarY + progressBarHeight / 2
     container.addChild(progressText)
     
-    // Make progress bar interactive
+    // Make progress bar interactive - navigation tour par tour
     progressBg.eventMode = 'static'
     progressBg.cursor = 'pointer'
     progressBg.on('pointerdown', (event) => {
       const localX = event.data.getLocalPosition(container).x - 20
       const clickProgress = Math.max(0, Math.min(1, localX / progressBarWidth))
+      
+      // Naviguer dans les tours de jeu
       const newIndex = Math.floor(clickProgress * (totalTurns - 1))
       if (onSeek) onSeek(newIndex)
     })
@@ -490,12 +1162,17 @@ function PixiGrid({
         ref={canvasRef} 
         style={{ 
           display: 'inline-block',
-          maxWidth: '100%',
-          maxHeight: '100%',
-          width: 'auto',
-          height: 'auto'
+          width: '100%',
+          height: '100%',
+          border: '1px solid red' // Debug border
         }} 
       />
+      {/* Debug info */}
+      <div style={{ position: 'absolute', top: '10px', right: '10px', background: 'rgba(0,0,0,0.8)', color: 'white', padding: '5px', fontSize: '12px' }}>
+        Canvas: {canvasRef.current ? 'OK' : 'NULL'} | 
+        App: {appRef.current ? 'OK' : 'NULL'} | 
+        Sprites: {spritesLoaded ? 'OK' : 'LOADING'}
+      </div>
     </div>
   )
 }
@@ -630,6 +1307,13 @@ export default function Visualizer({
   } else if (winner === 'draw') {
     winnerMessage = { text: 'Match nul !', color: '#ffaa00' }
   }
+
+  console.log('Visualizer render:', {
+    hasHistory: !!(history && history.length > 0),
+    safeIndex,
+    hasState: !!state,
+    winnerMessage
+  })
 
   return (
     <div className="visualizer" data-component="Visualizer">

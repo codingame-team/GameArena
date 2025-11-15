@@ -10,7 +10,7 @@ SOLID compliant avec séparation des responsabilités.
 """
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from werkzeug.utils import secure_filename
-from referees.pacman_referee import PacmanReferee
+from referees.pacman_referee_v2 import PacmanRefereeV2
 import os
 import pathlib
 from game_sdk import Referee, make_bot_runner, BotRunner
@@ -53,7 +53,7 @@ app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-key-
 app.config['JWT_TOKEN_LOCATION'] = ['headers']
 app.config['JWT_HEADER_NAME'] = 'Authorization'
 app.config['JWT_HEADER_TYPE'] = 'Bearer'
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///instance/gamearena.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', f"sqlite:///{os.path.abspath('instance/gamearena.db')}")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -125,7 +125,6 @@ from referees.pacman_referee_v2 import PacmanRefereeV2
 
 REFEREES = {
     'pacman': PacmanRefereeV2,  # V2 est maintenant le referee par défaut (support ligues)
-    'pacman_v1': PacmanReferee,  # Ancien referee gardé pour rétrocompatibilité
     'pacman_v2': PacmanRefereeV2  # Alias explicite
 }
 
@@ -570,13 +569,16 @@ def create_game():
     mode = body.get('mode', 'player-vs-bot')
     bot_runner = body.get('bot_runner')
     
-    # Récupérer la ligue de l'utilisateur courant
+    # Récupérer la ligue de l'utilisateur courant (déterminée par son bot principal)
     user_league = None
     try:
         user = get_current_user()
-        if user:
-            user_league = user.league
-            logging.getLogger(__name__).info(f"Creating game for user {user.username} in league {user_league}")
+        if user and user.bots:
+            # Utiliser le bot avec le plus haut ELO pour déterminer la ligue
+            user_bot = max(user.bots, key=lambda b: b.elo_rating) if user.bots else None
+            if user_bot:
+                user_league = LeagueManager.get_league_from_elo(user_bot.elo_rating).value
+                logging.getLogger(__name__).info(f"Creating game for user {user.username} in league {user_league}")
     except Exception as e:
         logging.getLogger(__name__).warning(f"Could not get user league: {e}")
     
@@ -1121,12 +1123,13 @@ def api_get_user_league():
     # Récupérer les informations de ligue basées sur l'ELO du bot
     league_info = LeagueManager.get_league_info(user_bot.elo_rating)
     
-    # Calculer le ranking dans la ligue
-    ranking = get_league_ranking(user_bot.id, user_bot.league)
+    # Calculer le ranking dans la ligue (utiliser la ligue déterminée par ELO)
+    current_league = LeagueManager.get_league_from_elo(user_bot.elo_rating)
+    ranking = get_league_ranking(user_bot.id, current_league.value)
     
     return jsonify({
         'current_league': league_info['current_league'],
-        'league_id': user_bot.league,
+        'league_id': current_league.value,  # Utiliser la ligue déterminée par ELO
         'elo': user_bot.league_elo,  # ELO local à la ligue
         'rank': ranking['rank'],
         'total_bots': ranking['total_bots'],
@@ -1166,25 +1169,34 @@ def api_get_leaderboard():
             
             league = League.from_name(normalized)
             
-            # Récupérer tous les bots de la ligue (y compris Boss)
-            bots = Bot.query.filter_by(
-                league=int(league),
-                is_active=True
-            ).order_by(Bot.league_elo.desc()).limit(limit).all()
+            # Récupérer tous les bots actifs et déterminer leur ligue par ELO
+            all_bots = Bot.query.filter_by(is_active=True).all()
             
-            # Construire la liste des entrées
+            # Filtrer les bots de cette ligue (déterminée par leur ELO global)
+            league_bots = []
+            for bot in all_bots:
+                bot_league = LeagueManager.get_league_from_elo(bot.elo_rating)
+                if bot_league == league:
+                    league_bots.append(bot)
+            
+            # Trier par league_elo décroissant et limiter
+            league_bots.sort(key=lambda b: b.league_elo, reverse=True)
+            league_bots = league_bots[:limit]
+            
+            # Construire la liste des entrées avec rangs
             entries = []
-            for bot in bots:
+            for rank, bot in enumerate(league_bots, start=1):
                 owner = User.query.get(bot.user_id)
-                league_obj = League.from_index(bot.league)
+                league_obj = LeagueManager.get_league_from_elo(bot.elo_rating)
                 
                 entries.append({
+                    'rank': rank,
                     'bot_id': bot.id,
                     'bot_name': bot.name,
                     'username': owner.username if owner else 'Unknown',
                     'elo': bot.league_elo,  # ELO local à la ligue
                     'league': league_obj.to_name(),
-                    'league_index': bot.league,
+                    'league_index': league_obj.value,
                     'avatar': owner.avatar if owner else 'my_bot',
                     'is_boss': bot.is_boss,
                     'matches': bot.match_count,
@@ -1219,15 +1231,16 @@ def api_get_leaderboard():
         
         for bot in bots:
             owner = User.query.get(bot.user_id)
-            league_obj = League.from_index(bot.league)
+            # Déterminer la ligue actuelle du bot par son ELO global
+            league_obj = LeagueManager.get_league_from_elo(bot.elo_rating)
             
-            entries_by_league[bot.league].append({
+            entries_by_league[int(league_obj)].append({
                 'bot_id': bot.id,
                 'bot_name': bot.name,
                 'username': owner.username if owner else 'Unknown',
                 'elo': bot.league_elo,  # ELO local à la ligue
-                'league': league_obj.to_name(),
-                'league_index': bot.league,
+                'league': league_obj.to_name(),  # Utilise la ligue déterminée par ELO
+                'league_index': league_obj.value,  # Utilise l'index de la ligue déterminée par ELO
                 'avatar': owner.avatar if owner else 'my_bot',
                 'is_boss': False,
                 'matches': bot.match_count,
@@ -1340,7 +1353,8 @@ def api_get_bots_by_league():
         if not user_bot:
             return jsonify({'error': 'Vous devez avoir un bot actif'}), 400
         
-        user_league = League.from_index(user_bot.league)
+        # Déterminer la ligue de l'utilisateur par son ELO le plus élevé
+        user_league = LeagueManager.get_league_from_elo(user_bot.elo_rating)
         league_info = LeagueManager.get_league_info(user_bot.elo_rating)
         
         # Récupérer le Boss de la ligue d'abord
@@ -1363,8 +1377,8 @@ def api_get_bots_by_league():
             if bot.id in all_boss_ids:
                 continue
                 
-            # Filtrer par league du bot (pas par ELO du owner)
-            bot_league = League.from_index(bot.league)
+            # Filtrer par league du bot (déterminée par son ELO global)
+            bot_league = LeagueManager.get_league_from_elo(bot.elo_rating)
             if bot_league == user_league:
                 owner = User.query.get(bot.user_id)
                 league_bots.append({
@@ -1373,29 +1387,39 @@ def api_get_bots_by_league():
                     'user_id': bot.user_id,
                     'owner_username': owner.username if owner else 'Unknown',
                     'owner_avatar': owner.avatar if owner else 'my_bot',
-                    'elo_rating': bot.elo_rating,
-                    'league': bot.league,
+                    'elo_rating': bot.league_elo,  # Utiliser league_elo pour cohérence
+                    'league': bot_league.value,  # Utiliser la ligue déterminée par ELO
                     'match_count': bot.match_count,
                     'win_count': bot.win_count,
                     'avatar': owner.avatar if owner else 'my_bot',
                     'is_boss': False
                 })
         
-        # Construire les données du Boss
+        # Construire les données du Boss avec avatar spécifique à la ligue
         boss_data = None
         if boss:
             boss_owner = User.query.get(boss.user_id)
+            # Avatar du Boss selon la ligue
+            boss_avatar_map = {
+                League.WOOD2: 'wood2_boss',
+                League.WOOD1: 'wood1_boss',
+                League.BRONZE: 'bronze_boss',
+                League.SILVER: 'silver_boss',
+                League.GOLD: 'gold_boss'
+            }
+            boss_avatar = boss_avatar_map.get(user_league, 'boss')
+            
             boss_data = {
                 'id': boss.id,
                 'name': boss.name,
                 'user_id': boss.user_id,
                 'owner_username': boss_owner.username if boss_owner else 'System',
-                'owner_avatar': boss_owner.avatar if boss_owner else 'boss',
-                'elo_rating': boss.elo_rating,
-                'league': boss.league,
+                'owner_avatar': boss_avatar,
+                'elo_rating': boss.league_elo,  # Utiliser league_elo
+                'league': LeagueManager.get_league_from_elo(boss.elo_rating).value,  # Utiliser ligue déterminée par ELO
                 'match_count': boss.match_count,
                 'win_count': boss.win_count,
-                'avatar': boss_owner.avatar if boss_owner else 'boss',
+                'avatar': boss_avatar,
                 'is_boss': True
             }
         
@@ -1499,11 +1523,20 @@ def get_league_ranking(bot_id, league_level):
             'league_elo': int     # Bot's ELO in this league
         }
     """
-    # Récupérer tous les bots de la ligue (triés par league_elo décroissant)
-    bots_in_league = Bot.query.filter_by(
-        league=league_level,
-        is_active=True
-    ).order_by(Bot.league_elo.desc()).all()
+    # Récupérer tous les bots actifs et les grouper par ligue déterminée par ELO
+    all_active_bots = Bot.query.filter_by(is_active=True).all()
+    
+    # Filtrer les bots de la ligue spécifiée
+    bots_in_league = []
+    target_league = League.from_index(league_level)
+    
+    for bot in all_active_bots:
+        bot_league = LeagueManager.get_league_from_elo(bot.elo_rating)
+        if bot_league == target_league:
+            bots_in_league.append(bot)
+    
+    # Trier par league_elo décroissant
+    bots_in_league.sort(key=lambda b: b.league_elo, reverse=True)
     
     total_bots = len(bots_in_league)
     rank = 0
@@ -1696,24 +1729,34 @@ def api_submit_bot_to_arena(bot_id):
         # Placement matches progressifs: commencer par les plus faibles, monter graduellement
         import random
         
-        # Déterminer la ligue du joueur basée sur son bot
+        # Déterminer la ligue du joueur basée sur son ELO actuel
         player_bot = Bot.query.get(bot_id)
         if not player_bot:
             return jsonify({'error': 'Bot not found'}), 404
         
-        player_league = League.from_index(player_bot.league)
+        player_league = LeagueManager.get_league_from_elo(player_bot.elo_rating)
         
         # Récupérer tous les adversaires de la même ligue, triés par ELO croissant
         # INCLURE LE BOSS dans la liste des adversaires pour qu'il apparaisse dans son palier
-        league_opponents = Bot.query.filter(
+        # Filtrer dynamiquement par ligue déterminée par ELO
+        all_active_bots = Bot.query.filter(
             Bot.id != bot_id,
             Bot.is_active == True,
-            Bot.league == player_bot.league,
             db.or_(
                 Bot.latest_version_number > 0,  # Bots normaux avec version
                 Bot.is_boss == True  # Boss (même sans version)
             )
-        ).order_by(Bot.elo_rating.asc()).all()
+        ).all()
+        
+        # Filtrer les bots de la même ligue
+        league_opponents = []
+        for bot in all_active_bots:
+            bot_league = LeagueManager.get_league_from_elo(bot.elo_rating)
+            if bot_league == player_league:
+                league_opponents.append(bot)
+        
+        # Trier par elo_rating croissant
+        league_opponents.sort(key=lambda b: b.elo_rating)
         
         # Le Boss sera dans league_opponents, triés par league_elo avec les autres
         boss = BossSystem.get_boss_for_league(player_league)  # Pour logging
@@ -2287,7 +2330,7 @@ def api_challenge_bot():
     
     # Create game using existing game creation logic
     game_id = str(uuid.uuid4())
-    referee = PacmanReferee()
+    referee = PacmanRefereeV2()
     referee.init_game({})
     
     game_entry = {
