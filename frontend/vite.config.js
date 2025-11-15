@@ -11,7 +11,7 @@ export default defineConfig({
       // Proxy /api requests to the Flask backend during development
       // Plus de CORS: le navigateur voit tout comme même origine
       '/api': {
-        target: 'http://127.0.0.1:3000',
+        target: 'http://127.0.0.1:5000',
         changeOrigin: true,
         secure: false
       }
