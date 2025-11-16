@@ -25,6 +25,16 @@ export function setupCsrfInterceptor() {
     }
     return config
   }, (error) => Promise.reject(error))
+  
+  axios.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (!error.response) {
+        window.location.href = 'http://philippe.mourey.com:65000'
+      }
+      return Promise.reject(error)
+    }
+  )
 }
 
 export function clearCsrfToken() {
