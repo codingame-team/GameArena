@@ -28,6 +28,7 @@ export function useGamePlayback() {
   const pausedRef = useRef(false)
   const stoppedRef = useRef(false)
   const animationDelayRef = useRef(animationDelay)
+  const currentRunIdRef = useRef(0)
   
   const [isCollecting, setIsCollecting] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
@@ -47,6 +48,7 @@ export function useGamePlayback() {
     pausedRef,
     stoppedRef,
     animationDelayRef,
+    currentRunIdRef,
     setIsCollecting,
     setIsAnimating,
     setIsPaused,
@@ -140,9 +142,22 @@ export function useGamePlayback() {
    */
   const startGame = useCallback(async (payload, onBeforeStart) => {
     try {
+      // Incrémenter le runId pour invalider les anciens runs
+      currentRunIdRef.current += 1
+      const thisRunId = currentRunIdRef.current
+      
+      // Arrêter toute animation/collecte en cours
+      stopAnimation()
+      collectingRef.current = false
+      setIsCollecting(false)
+      
+      // Réinitialiser complètement l'historique
+      setHistory([])
+      setFullHistory([])
+      setCurrentIndex(-1)
       setCombinedLogs('')
       
-      // Vérification si déjà en cours
+      // Vérification si déjà en cours (après arrêt)
       if (isCollecting || collectingRef.current) {
         appendLog('Backend is already building a run; please wait until it finishes.')
         return
@@ -168,16 +183,23 @@ export function useGamePlayback() {
 
       // Collecter l'historique
       const collected = await collectFullHistory(gid)
+      
+      // Vérifier si ce run est toujours valide
+      if (thisRunId !== currentRunIdRef.current) {
+        appendLog('Run cancelled (newer run started)')
+        return
+      }
+      
       setFullHistory(collected)
 
       // Lancer l'animation
-      if (!stoppedRef.current) {
+      if (!stoppedRef.current && thisRunId === currentRunIdRef.current) {
         if (isAnimating) {
           appendLog('Stopping previous animation and switching to newly collected run...')
           stopAnimation()
           await new Promise(r => setTimeout(r, 30))
         }
-        await animateCollected(collected, 0)
+        await animateCollected(collected, 0, thisRunId)
       }
     } catch (e) {
       appendLog(`Error creating game: ${e}`)
@@ -191,17 +213,18 @@ export function useGamePlayback() {
     // Si pas en cours d'animation mais historique disponible
     if (!isAnimating && fullHistory && fullHistory.length > 0) {
       const total = fullHistory.length
+      const runId = currentRunIdRef.current
       
       // Si à la fin, recommencer depuis le début
       if (currentIndex >= total - 1) {
-        animateCollected(fullHistory, -1)
+        animateCollected(fullHistory, -1, runId)
         return
       }
       
       // Sinon continuer depuis la position actuelle
       const startIndex = (currentIndex >= 0) ? currentIndex : 0
       if (startIndex < total) {
-        animateCollected(fullHistory, startIndex)
+        animateCollected(fullHistory, startIndex, runId)
       }
       return
     }

@@ -30,6 +30,9 @@ import useLeague from '../hooks/useLeague'
  * - Composants UI réutilisables
  * - Dépendances inversées (DIP)
  */
+
+const INITIAL_LOGS_HEIGHT = 0.7
+
 export default function PlaygroundPage() {
   // Authentication check
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -123,6 +126,8 @@ export default function PlaygroundPage() {
 
   // Modal arena
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [logsState, setLogsState] = useState('collapsed') // 'collapsed', 'normal', 'maximized'
+  const [savedRowRatio, setSavedRowRatio] = useState(INITIAL_LOGS_HEIGHT)
 
   // Initialize bot and status on mount
   useEffect(() => {
@@ -191,10 +196,12 @@ export default function PlaygroundPage() {
    * Navigation dans l'historique
    */
   const stepBackward = () => {
+    stopPlayback()
     if (currentIndex > 0) seekToIndex(currentIndex - 1)
   }
 
   const stepForward = () => {
+    stopPlayback()
     const total = getTotalTurns()
     if (currentIndex < total - 1) seekToIndex(currentIndex + 1)
   }
@@ -412,19 +419,92 @@ export default function PlaygroundPage() {
           />
 
           {/* Logs */}
-          <div className="frame logs-frame">
-            <BotStderrPanel
-              botLogs={history[currentIndex]?.bot_logs}
-              globalStdout={history[currentIndex]?.__global_stdout}
-              globalStderr={history[currentIndex]?.__global_stderr}
-              gameState={history[currentIndex]?.state}
-              fullHistory={fullHistory}
-              isCollecting={isCollecting}
-              currentIndex={currentIndex}
-              onTurnClick={handleTurnClick}
-              player1Name={capturedPlayer1Name}
-              player2Name={capturedPlayer2Name}
-            />
+          <div 
+            className="frame logs-frame" 
+            style={{ 
+              position: 'relative',
+              height: logsState === 'collapsed' ? '40px' : (logsState === 'maximized' ? '100%' : 'auto'),
+              overflow: logsState === 'collapsed' ? 'hidden' : 'auto'
+            }}
+          >
+            <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '4px', zIndex: 10 }}>
+              <button 
+                onClick={() => {
+                  if (logsState === 'collapsed') {
+                    setLogsState('normal')
+                    if (savedRowRatio !== null) {
+                      setRowRatio(savedRowRatio)
+                    }
+                  } else {
+                    if (logsState === 'maximized') {
+                      setSavedRowRatio(INITIAL_LOGS_HEIGHT)
+                    } else {
+                      setSavedRowRatio(rowRatio)
+                    }
+                    setRowRatio(0.95)
+                    setLogsState('collapsed')
+                  }
+                }}
+                style={{
+                  background: 'var(--frame-bg)',
+                  border: '1px solid var(--muted)',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  color: 'var(--text)'
+                }}
+                title={logsState === 'collapsed' ? 'Déplier les logs' : 'Replier les logs (hauteur minimale)'}
+              >
+                {logsState === 'collapsed' ? '▼' : '▲'}
+              </button>
+              {logsState !== 'collapsed' && (
+                <button 
+                  onClick={() => {
+                    if (logsState === 'maximized') {
+                      setLogsState('normal')
+                      if (savedRowRatio !== null) {
+                        setRowRatio(savedRowRatio)
+                      }
+                    } else {
+                      setSavedRowRatio(rowRatio)
+                      setRowRatio(0.01)
+                      setLogsState('maximized')
+                    }
+                  }}
+                  style={{
+                    background: 'var(--frame-bg)',
+                    border: '1px solid var(--muted)',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    color: 'var(--text)'
+                  }}
+                  title={logsState === 'maximized' ? 'Restaurer la taille normale' : 'Agrandir sur toute la hauteur'}
+                >
+                  {logsState === 'maximized' ? '□' : '☐'}
+                </button>
+              )}
+            </div>
+            {logsState !== 'collapsed' ? (
+              <BotStderrPanel
+                botLogs={history[currentIndex]?.bot_logs}
+                globalStdout={history[currentIndex]?.__global_stdout}
+                globalStderr={history[currentIndex]?.__global_stderr}
+                gameState={history[currentIndex]?.state}
+                fullHistory={fullHistory}
+                isCollecting={isCollecting}
+                currentIndex={currentIndex}
+                onTurnClick={handleTurnClick}
+                player1Name={capturedPlayer1Name}
+                player2Name={capturedPlayer2Name}
+              />
+            ) : (
+              <div style={{ padding: '8px', color: 'var(--muted)', fontSize: '14px' }}>
+                Logs (cliquez sur ▼ pour déplier)
+              </div>
+            )}
           </div>
         </div>
 

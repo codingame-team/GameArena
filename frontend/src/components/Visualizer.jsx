@@ -37,6 +37,8 @@ function PixiGrid({
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 })
   const [spritesLoaded, setSpritesLoaded] = useState(false)
   const [currentAnimFrame, setCurrentAnimFrame] = useState(0)
+  const [fullscreenTrigger, setFullscreenTrigger] = useState(0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const particlePoolRef = useRef([])
   const activeParticlesRef = useRef([])
   
@@ -135,6 +137,23 @@ function PixiGrid({
 
     console.log('📞 Appel loadSprites()')
     loadSprites()
+  }, [])
+  
+  // Handle fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const inFullscreen = !!document.fullscreenElement
+      console.log('Fullscreen change detected:', inFullscreen, 'element:', document.fullscreenElement)
+      setIsFullscreen(inFullscreen)
+      setFullscreenTrigger(prev => prev + 1)
+      // Forcer un second re-render après un délai pour s'assurer que le canvas est bien redimensionné
+      setTimeout(() => {
+        setFullscreenTrigger(prev => prev + 1)
+      }, 100)
+    }
+    
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
   }, [])
   
   // Handle window resize
@@ -242,7 +261,7 @@ function PixiGrid({
 
   // Render grid when app is ready and state changes
   useEffect(() => {
-    console.log('Render effect triggered:', { app: !!appRef.current, state: !!state, spritesLoaded })
+    console.log('Render effect triggered:', { app: !!appRef.current, state: !!state, spritesLoaded, isFullscreen, fullscreenTrigger, actualFullscreen: !!document.fullscreenElement })
 
     if (!appRef.current || !state) {
       console.log('Skipping render - app or state not ready')
@@ -256,12 +275,19 @@ function PixiGrid({
 
     console.log('Rendering grid:', { width, height, pellets: pellets.length, cherries: cherries.length })
 
-    // Calculate optimal cell size based on container size
-    const availableWidth = containerSize.width - GRID_PADDING * 2
-    const availableHeight = containerSize.height - GRID_PADDING * 2 - CONTROLS_HEIGHT
+    // Calculate optimal cell size based on container size or fullscreen
+    let availableWidth, availableHeight
+    if (isFullscreen && appRef.current) {
+      availableWidth = appRef.current.renderer.width - GRID_PADDING * 2
+      availableHeight = appRef.current.renderer.height - GRID_PADDING * 2 - CONTROLS_HEIGHT - 150
+    } else {
+      availableWidth = containerSize.width - GRID_PADDING * 2
+      availableHeight = containerSize.height - GRID_PADDING * 2 - CONTROLS_HEIGHT
+    }
     const cellSizeByWidth = Math.floor(availableWidth / width)
     const cellSizeByHeight = Math.floor(availableHeight / height)
-    const CELL_SIZE = Math.max(MIN_CELL_SIZE, Math.min(MAX_CELL_SIZE, Math.min(cellSizeByWidth, cellSizeByHeight)))
+    const optimalCellSize = Math.min(cellSizeByWidth, cellSizeByHeight)
+    const CELL_SIZE = isFullscreen ? Math.max(MIN_CELL_SIZE, optimalCellSize) : Math.max(MIN_CELL_SIZE, Math.min(MAX_CELL_SIZE, optimalCellSize))
 
     // Gérer les deux formats de pacs
     let pacsArray = []
@@ -286,9 +312,18 @@ function PixiGrid({
     if (app && gridContainer && controlsContainer) {
       const HUD_HEIGHT = 150
       // Resize canvas if needed
-      app.renderer.resize(width * CELL_SIZE + GRID_PADDING * 2, height * CELL_SIZE + GRID_PADDING * 2 + CONTROLS_HEIGHT + HUD_HEIGHT)
+      if (isFullscreen) {
+        const fsWidth = screen.width
+        const fsHeight = screen.height
+        console.log('Resizing to fullscreen:', fsWidth, fsHeight)
+        app.renderer.resize(fsWidth, fsHeight)
+      } else {
+        console.log('Resizing to normal')
+        app.renderer.resize(width * CELL_SIZE + GRID_PADDING * 2, height * CELL_SIZE + GRID_PADDING * 2 + CONTROLS_HEIGHT + HUD_HEIGHT)
+      }
       
-      // Positionner la grille plus bas pour faire place au HUD
+      // Positionner la grille
+      gridContainer.x = GRID_PADDING
       gridContainer.y = GRID_PADDING + HUD_HEIGHT
 
       // Ajuster la taille des sprites si CELL_SIZE a changé
@@ -317,8 +352,8 @@ function PixiGrid({
         }
         const bg = existingBg || app.stage.children.find(c => c.isBackground)
         if (bg) {
-          bg.width = app.screen.width
-          bg.height = app.screen.height
+          bg.width = app.renderer.width
+          bg.height = app.renderer.height
         }
       }
       
@@ -361,7 +396,7 @@ function PixiGrid({
     } else {
       console.log('Missing containers:', { app: !!app, gridContainer: !!gridContainer, controlsContainer: !!controlsContainer })
     }
-  }, [state, prevState, containerSize, spritesLoaded, currentAnimFrame])
+  }, [state, prevState, containerSize, spritesLoaded, currentAnimFrame, fullscreenTrigger, isFullscreen])
 
   // Trigger initial render when app becomes available
   useEffect(() => {
@@ -774,12 +809,6 @@ function PixiGrid({
   const renderGrid = (app, container, width, height, pellets, cherries, pacsArray, CELL_SIZE, prevState, player1Name, player2Name) => {
     // Tooltip container
     const tooltipRef = { current: null }
-    
-    // Draw grid background
-    const bg = new PIXI.Graphics()
-    bg.rect(0, 0, width * CELL_SIZE, height * CELL_SIZE)
-    bg.fill(0x0f0f1e)
-    container.addChild(bg)
     
     // Draw floor tiles first
     const tilesSheet = spriteSheetsRef.current.tiles
@@ -1251,18 +1280,18 @@ function PixiGrid({
       }
     })
     
-    // Winner overlay
+    // Winner overlay (ajouté au gridContainer pour ne pas masquer les contrôles)
     if (winnerMessage) {
       const overlay = new PIXI.Graphics()
       overlay.rect(0, 0, width * CELL_SIZE, height * CELL_SIZE)
-      overlay.fill(0x000000, 0.85)
+      overlay.fill(0x000000, 0.7)
       container.addChild(overlay)
       
       const winnerText = new PIXI.Text({
         text: winnerMessage.text,
         style: {
           fontFamily: 'Arial',
-          fontSize: 32,
+          fontSize: 48,
           fontWeight: 'bold',
           fill: winnerMessage.color,
           align: 'center'
@@ -1383,6 +1412,49 @@ function PixiGrid({
       container.addChild(button)
       container.addChild(buttonText)
     })
+    
+    // Fullscreen button (visible only when NOT in fullscreen)
+    if (!document.fullscreenElement) {
+      const controlsY = progressBarY + progressBarHeight + 20
+      const fullscreenBtn = new PIXI.Graphics()
+      fullscreenBtn.rect(containerWidth - 60, controlsY, 50, 40)
+      fullscreenBtn.fill(0x3a3a4e)
+      fullscreenBtn.stroke({ width: 2, color: 0x5a5a7e })
+      fullscreenBtn.eventMode = 'static'
+      fullscreenBtn.cursor = 'pointer'
+      
+      const fullscreenText = new PIXI.Text({
+        text: '⛶',
+        style: { fontFamily: 'Arial', fontSize: 24, fill: 0xffffff }
+      })
+      fullscreenText.anchor.set(0.5)
+      fullscreenText.x = containerWidth - 35
+      fullscreenText.y = controlsY + 20
+      
+      fullscreenBtn.on('pointerover', () => {
+        fullscreenBtn.clear()
+        fullscreenBtn.rect(containerWidth - 60, controlsY, 50, 40)
+        fullscreenBtn.fill(0x4a4a6e)
+        fullscreenBtn.stroke({ width: 2, color: 0x6a6a8e })
+      })
+      
+      fullscreenBtn.on('pointerout', () => {
+        fullscreenBtn.clear()
+        fullscreenBtn.rect(containerWidth - 60, controlsY, 50, 40)
+        fullscreenBtn.fill(0x3a3a4e)
+        fullscreenBtn.stroke({ width: 2, color: 0x5a5a7e })
+      })
+      
+      fullscreenBtn.on('pointerdown', () => {
+        const elem = containerRef.current
+        if (elem) {
+          elem.requestFullscreen().catch(err => console.error('Fullscreen error:', err))
+        }
+      })
+      
+      container.addChild(fullscreenBtn)
+      container.addChild(fullscreenText)
+    }
   }
   
   return (
@@ -1397,6 +1469,7 @@ function PixiGrid({
         padding: '10px',
         boxSizing: 'border-box'
       }}
+      className="pixi-container"
     >
       <div 
         ref={canvasRef} 

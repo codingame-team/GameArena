@@ -13,8 +13,8 @@ import { useState, useCallback, useRef } from 'react'
  */
 export function usePanelLayout() {
   // Panel ratios
-  const [leftPanelRatio, setLeftPanelRatio] = useState(0.25) // 25% pour l'éditeur
-  const [rowRatio, setRowRatio] = useState(2 / 3) // 2/3 pour le top, 1/3 pour le bottom
+  const [leftPanelRatio, setLeftPanelRatio] = useState(0.5) // 50% pour la colonne gauche
+  const [rowRatio, setRowRatio] = useState(0.95) // 95% pour le visualizer, 5% pour les logs (repliés)
   const [bottomPanelVisible, setBottomPanelVisible] = useState(true)
   const [isDragging, setIsDragging] = useState(false)
   

@@ -12,6 +12,7 @@ export default function useGameRunner({
   pausedRef,
   stoppedRef,
   animationDelayRef,
+  currentRunIdRef,
   // state setters from the caller
   setIsCollecting,
   setIsAnimating,
@@ -55,7 +56,7 @@ export default function useGameRunner({
     return collected
   }
 
-  async function animateCollected(collected, startIndex=0){
+  async function animateCollected(collected, startIndex=0, runId=null){
     if(!Array.isArray(collected) || collected.length===0) return
     if(animatingRef) animatingRef.current = true
     if(setIsAnimating) setIsAnimating(true)
@@ -85,8 +86,15 @@ export default function useGameRunner({
       // maintain a simple index counter so tests that mock setters observe calls
       let idxCounter = (startIndex >= 0) ? (startIndex) : -1
       for(let i = playFrom; i < collected.length; i++){
+        // Vérifier si ce run est toujours valide
+        if(runId !== null && currentRunIdRef && currentRunIdRef.current !== runId) break
         if(stoppedRef && stoppedRef.current) break
-        while(pausedRef && pausedRef.current){ if(stoppedRef && stoppedRef.current) break; await new Promise(r=>setTimeout(r, 150)) }
+        while(pausedRef && pausedRef.current){ 
+          if(runId !== null && currentRunIdRef && currentRunIdRef.current !== runId) break
+          if(stoppedRef && stoppedRef.current) break
+          await new Promise(r=>setTimeout(r, 150))
+        }
+        if(runId !== null && currentRunIdRef && currentRunIdRef.current !== runId) break
         if(stoppedRef && stoppedRef.current) break
         const item = collected[i]
         if(item && item.__global_stdout){ setCombinedLogs && setCombinedLogs(l=> l + item.__global_stdout); }
