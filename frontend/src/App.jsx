@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { setupCsrfInterceptor } from './utils/csrf'
+import { setupCsrfInterceptor } from './utils/csrf.js'
 import { useAuth } from './contexts/AuthContext'
 import PlaygroundPage from './components/PlaygroundPage'
 import ArenaPage from './components/ArenaPage'
