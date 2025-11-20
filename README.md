@@ -69,62 +69,138 @@ Format `history_entry` (aperçu)
   - { "turn": 3, "actions": [{"player_id":"p1","action":"MOVE 3 2"}, ...], "state": { ... }, "timestamp": "..." }
 - Le frontend utilise la liste des `history_entry` pour reproduire la partie image par image.
 
-Configuration et variables d'environnement importantes
-- `BOT_DOCKER_IMAGE` : image Docker utilisée pour exécuter les bots.
-- `BOT_RUNNER` : force le runner (`auto|docker|subprocess`).
-- `BOT_TMP_DIR` : dossier de base pour les montages Docker (utile sur macOS).
-- `BOT_DOCKER_AUTO_THRESHOLD_MS`, `BOT_DOCKER_STARTUP_MS` : heuristiques de sélection du runner.
-- `DOCKER_RUNNER_TRACE`, `DOCKER_RUNNER_PER_RUN_CHECKS` : logs et vérifications du runner Docker.
+## Détail exact du format `history_entry`
 
-Exécution locale rapide
-1) Backend :
+Ci-dessous la spécification complète et normative du format JSON renvoyé par l'API (`POST /api/games/<game_id>/step`) dans le champ `history_entry`, et stocké dans `Referee.history`.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python app.py
-```
+Objectif
+- Permettre au frontend (visualizer), aux outils d'analyse et aux tests de rejouer précisément chaque tour.
+- Fournir suffisamment d'information pour : afficher l'état, montrer les sorties des bots, diagnostiquer erreurs et rejouer la logique côté client.
 
-2) Frontend (dev) :
+Contrat général (résumé)
+- Type racine : objet JSON
+- Champs principaux :
+  - `turn` (int) : numéro du tour (0-based ou 1-based selon referee, vérifier le referee; la plupart des referees utilisent 0-based pour le premier état après init). Obligatoire.
+  - `state` (object) : snapshot sérialisable de l'état du jeu après application des actions de ce tour. Obligatoire.
+  - `actions` (array) : liste des actions demandées/appliquées ce tour. Optionnel mais recommandé (vide si aucun mouvement). Chaque entrée d'action décrit qui a joué et quelle action a été appliquée.
+  - `bot_logs` (object) : logs produits par les runners pour chaque rôle/joueur (structure injectée côté API — voir `app.py`). Optionnel mais très utile pour debug.
+  - `stdout`, `stderr` (string) : sorties textuelles provenant du referee (résumé du turn) — facultatif.
+  - `__global_stdout`, `__global_stderr` (string) : champs spéciaux parfois ajoutés par l'API pour contenir sorties globales retournées lors d'un step `finished` (voir usage dans le frontend). Optionnel.
+  - `timestamp` (string) : horodatage ISO 8601 du moment où le tour a été produit. Optionnel mais recommandé.
+  - `meta` (object) : champ libre pour ajouter métadonnées (ex: events, collision resolution details, reason_for_end). Optionnel.
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Exemple JSON minimal
 
-API exemples
-- Lister les referees :
+{
+  "turn": 12,
+  "state": { /* état sérialisable pour UI (positions, scores, map, pellets, etc.) */ },
+  "actions": [
+    { "player_id": "player", "raw": "MOVE 5 3", "resolved": "MOVE 5 3" },
+    { "player_id": "opponent", "raw": "SPEED", "resolved": "SPEED" }
+  ],
+  "bot_logs": {
+    "player": { "stdout": "...", "stderr": "...", "rc": 0, "runner": "docker" },
+    "opponent": { "stdout": "...", "stderr": "...", "rc": 0, "runner": "subprocess" }
+  },
+  "timestamp": "2025-11-20T12:34:56.789Z"
+}
 
-```bash
-curl -s http://127.0.0.1:5000/api/referees | jq
-```
+Schema détaillé (description)
+- turn: integer — numéro du tour (obligatoire)
 
-- Créer une partie :
+- state: object — représentation complète de l'état du jeu après le tour. Contenu dépend du Referee mais doit être entièrement sérialisable JSON et contenir au minimum les éléments nécessaires au visualizer :
+  - positions des entités (pacs, players) avec leurs identifiants
+  - carte / grille (si nécessaire) ou delta d'affichage
+  - scores / points par joueur
+  - pellets restants / leur valeur si applicable
+  - flags game-specific (ex: abilities actives : speed_remaining, switched_type)
 
-```bash
-curl -s -X POST http://127.0.0.1:5000/api/games \
-  -H 'Content-Type: application/json' \
-  -d '{"referee":"pacman","player_code":"print(\"MOVE 1 0\")"}' | jq
-```
+  Exemples de clés communes dans `state` (non obligatoires universellement) :
+  - `players`: { "player": {"pacs": [{"id": "p1", "x": 3, "y": 2, "alive": true, "ability": null}], "score": 10 }, "opponent": {...} }
+  - `map`: { "width": 10, "height": 8, "cells": ["....", "##..", ...] }
+  - `turn`: duplicate facultatif du champ racine pour facilité
 
-Tests et outils
-- Makefile expose des commandes utiles : `make install`, `make test-runner`, `make build-bot-image`.
-- Scripts d'intégration et tests unitaires pour le runner se trouvent dans `runner/` et `tests/`.
+- actions: array of objects. Chaque objet d'action peut contenir :
+  - `player_id` (string) — rôle/id du joueur (par ex. "player", "opponent", ou "bot:123")
+  - `raw` (string) — la sortie brute du bot ou la commande demandée
+  - `parsed` (object|string) — (optionnel) représentation parsée de l'action (ex: {"type":"MOVE","target":{"x":5,"y":3}})
+  - `resolved` (string) — (optionnel) action réellement appliquée après validation/résolution de conflit
+  - `notes` (string) — (optionnel) message expliquant invalidation ou ajustement
 
-Sécurité et robustesse (rappel)
-- Toujours exécuter le code utilisateur en isolation sur un environnement contrôlé. En production : forcer Docker, appliquer des limites ressources, désactiver le réseau, ne pas exécuter en root.
-- Valider et sanitizer toutes les entrées API côté serveur.
-- Logger et conserver les sorties des bots pour audit et debug.
+- bot_logs: object mapping role -> log object
+  - pour chaque rôle attendu (p.ex. "player", "opponent") :
+    - `stdout` (string) : sortie standard complète collectée pendant l'exécution (init + turn si parsed)
+    - `stderr` (string) : sortie d'erreur
+    - `rc` (int) : return code (0 pour succès, -1 ou autre pour erreur)
+    - `runner` (string) : stratégie runner utilisée ("docker", "subprocess", "parsed", "exception")
 
-Extension du projet
-- Ajouter un nouveau jeu : créer une sous-classe de `game_sdk.Referee`, définir le protocole d'input/output et enregistrer le referee dans la fabrique (`app.py` ou `RefereeFactory`).
-- Ajouter un runner : implémenter l'interface `BotRunner` et l'ajouter à la logique de sélection.
-- Découper `app.py` : extraire `services/` et `repositories/` pour clarifier les responsabilités.
+  Observations :
+  - `app.py` injecte ces logs après exécution via :
+    entry['bot_logs'] = {'player': player_log, 'opponent': opponent_log}
+  - Les champs peuvent contenir plusieurs lignes; le frontend concatène `stdout`/`stderr` pour l'affichage.
 
-Licence
-- Ce dépôt est un prototype éducatif. Voir les en-têtes de fichiers et les fichiers de configuration pour les détails de licence.
+- stdout / stderr : chaînes (optionnel)
+  - `stdout` et `stderr` peuvent contenir résumés ou sorties spécifiques générées par le Referee (ex: messages sur collisions, scoring changes). L'API ajoute parfois `__global_stdout` / `__global_stderr` pour messages envoyés lors d'une réponse `finished`.
+
+- meta: object (optionnel)
+  - `events`: liste d'événements survenus (p.ex. [ {"type":"collision","players":["player","opponent"],"pos":{"x":3,"y":2},"resolution":"player_survives"} ])
+  - `end_reason`: si la partie se termine, fournir une explication technique (ex: "math_win_by_pellets_remaining")
+  - `pathfinding_debug`: (optionnel) array ou object décrivant les chemins calculés pour MOVE non-adjacent
+
+Bonnes pratiques pour la production des `history_entry`
+- Rendre `state` aussi compacte que possible tout en conservant l'information nécessaire au visualizer (p.ex. serializer minimal des entités au lieu d'objets lourds).
+- Utiliser des types simples (int/string/array/object) et éviter les objets non sérialisables (datetime natif, sets, objets Python complexes) — sérialiser en ISO8601 pour les timestamps.
+- Toujours inclure `bot_logs` quand un bot a été exécuté : cela facilite le debug et l'audit.
+- Documenter dans le `Referee.get_protocol()` les attentes sur le format `state` et les clés essentielles que le frontend utilisera.
+
+Compatibilité frontend
+- Le frontend s'attend à trouver au minimum : `turn`, `state` et/ou `stdout`/`stderr` pour chaque `history_entry`.
+- Si l'API retourne des objets `__global_stdout` et `__global_stderr` lors d'un dernier step (finished), le frontend les traite comme des entrées globales séparées. Le champ `history` retourné par `GET /api/games/<id>/history` est une liste où certains éléments peuvent être des objets spéciaux contenant `__global_stdout` keys.
+
+Exemples complets
+
+1) Tour normal avec deux actions et logs :
+
+{
+  "turn": 5,
+  "state": {
+    "players": {
+      "player": {"score": 12, "pacs": [{"id":"p1","x":4,"y":2,"alive":true}]},
+      "opponent": {"score": 8, "pacs": [{"id":"o1","x":7,"y":1,"alive":true}]}
+    },
+    "map": {"width":10, "height":8}
+  },
+  "actions": [
+    {"player_id":"player","raw":"MOVE 4 2","parsed":{"type":"MOVE","x":4,"y":2},"resolved":"MOVE 4 2"},
+    {"player_id":"opponent","raw":"SPEED","resolved":"SPEED"}
+  ],
+  "bot_logs": {
+    "player": {"stdout":"init\nMOVE 4 2\n","stderr":"","rc":0,"runner":"docker"},
+    "opponent": {"stdout":"SPEED\n","stderr":"","rc":0,"runner":"subprocess"}
+  },
+  "timestamp": "2025-11-20T12:34:56.789Z"
+}
+
+2) Réponse finale (finished) — l'API peut renvoyer un `history` complet et des entrées globales :
+
+[
+  { /* history_entry tour 0 */ },
+  { /* history_entry tour N */ },
+  { "__global_stdout": "Match finished: player wins, final score 20-10" }
+]
+
+Notes pour les auteurs de Referee
+- Lorsque vous remplissez `ref.history.append(entry)` dans votre Referee, respectez le contrat ci-dessus :
+  - `entry['turn']` et `entry['state']` doivent toujours être présents.
+  - Ajoutez `entry['bot_logs']` uniquement si votre Referee n'attend pas que l'API (layer supérieur) injecte les logs ; par défaut `app.py` injecte les logs côté route `step`.
+  - Pour la compatibilité avec le visualizer, exposez les clés attendues (positions, scores, map).
+
+Tests et validation
+- Écrire des tests unitaires qui vérifient la présence des champs obligatoires et la sérialisation JSON (ex: tests/tests_referee_history.py).
+- Exemple d'assertions :
+  - `assert 'turn' in entry and isinstance(entry['turn'], int)`
+  - `assert 'state' in entry and isinstance(entry['state'], dict)`
+  - `if 'bot_logs' in entry: assert 'player' in entry['bot_logs']`
 
 ---
 
