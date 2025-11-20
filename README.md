@@ -1,17 +1,23 @@
 # GameArena — plateforme prototype d'arène de bots
 
-GameArena est un prototype d'une plateforme de programmation compétitive qui permet d'exécuter des "bots" (scripts utilisateur) contre un arbitre (Referee) et de rejouer l'historique des parties.
+GameArena est un prototype d'une plateforme de programmation compétitive qui permet d'exécuter des "bots" (codes écrits par des programmeurs) qui s'affrontent dans une arène. Le rôle du `Referee` est de définir les règles du jeu et de piloter l'avancement tour par tour ; il n'est pas un adversaire : les joueurs sont les bots.
 
 Résumé rapide
 - But : démontrer une architecture modulaire et sécurisée pour organiser des matchs entre programmes intelligents (bots) et expérimenter des règles de jeux.
 - Stack : Python (Flask) pour le backend, React + Vite pour le frontend, Docker pour l'isolation des bots.
 
 Fonctionnalités clés
-- Referee extensible : chaque jeu est implémenté comme une sous-classe de `game_sdk.Referee` (contrat : init_game, step, get_state, parse_bot_output, on_bot_timeout, ...).
+- Referee extensible : chaque jeu est implémenté comme une sous-classe de `game_sdk.Referee` (contrat : init_game, step, get_state, parse_bot_output, on_bot_timeout, ...). Le `Referee` définit le protocole, valide les actions des bots à chaque tour et met à jour l'état du jeu.
 - BotRunner abstrait : exécute le code des bots via plusieurs stratégies (docker, subprocess, mode parsed optimisé) sans coupler la logique du jeu à l'exécution.
 - Sandbox Docker : exécution isolée des bots avec nettoyage et limites ressources — fallback en `subprocess` si utile en dev.
 - Frontend interactif : éditeur de code (Monaco), visualizer et panneau de logs pour rejouer l'historique d'une partie.
 - Persistance minimale : bots persistants sous `persistent_bots/` et index JSON pour métadonnées.
+
+Arenas, ligues et boss
+- L'arène est organisée en ligues. Chaque ligue contient des joueurs (bots) qui s'affrontent entre eux selon les règles définies pour cette ligue.
+- Chaque ligue peut comporter un "boss" (un bot spécial ou une entité) que les joueurs doivent vaincre pour prétendre à la promotion.
+- Progression : les bots accumulent des victoires/points dans leur ligue ; lorsqu'ils remplissent les conditions (p.ex. classement suffisant et avoir vaincu le boss), ils peuvent être promus vers la ligue supérieure, qui peut ajouter des règles ou contraintes additionnelles.
+- Ce modèle permet d'introduire des règles graduelles et des variantes de jeu entre ligues sans modifier les joueurs : le `Referee` associé à la ligue pilote ces règles.
 
 Structure et rôles des composants
 
